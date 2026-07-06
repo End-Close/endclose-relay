@@ -1,0 +1,40 @@
+{
+  "name": "endclose-relay",
+  "version": "0.1.0",
+  "description": "Self-hosted webhook relay appliance: receives payment-processor webhooks, persists, masks, and forwards them to End Close via the public API",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "relayctl": "./dist/cli/relayctl.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc && mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "relayctl": "tsx src/cli/relayctl.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "fastify": "^5.3.2",
+    "pino": "^9.6.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  }
+}

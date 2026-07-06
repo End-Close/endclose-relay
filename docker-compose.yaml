@@ -1,0 +1,34 @@
+# endclose-relay — self-hosted webhook relay appliance.
+#
+# 1. Copy relay.example.yaml to relay.yaml and adjust routes/masking with End Close.
+# 2. Create .env with: ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY,
+#    MASKING_HMAC_KEY (see relay.example.yaml header).
+# 3. docker compose up -d
+#
+# Egress required: api.endclose.com:443 (plus your image registry for pulls). Nothing else.
+services:
+  relay:
+    image: ghcr.io/endclose/relay:0.1.0
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8443:8443" # webhook ingest — front with your own TLS terminator / LB
+    env_file: .env
+    environment:
+      RELAY_CONFIG: /etc/endclose-relay/relay.yaml
+    volumes:
+      - ./relay.yaml:/etc/endclose-relay/relay.yaml:ro
+      - relay-data:/var/lib/endclose-relay
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8443/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:

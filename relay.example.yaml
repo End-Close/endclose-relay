@@ -1,0 +1,80 @@
+# endclose-relay configuration
+#
+# Secrets are never written in this file — every secret is referenced by the name of an
+# environment variable (set them in .env next to docker-compose.yaml).
+#
+# Required env vars:
+#   ENDCLOSE_API_KEY        End Close API key (issued per appliance, environment-scoped)
+#   PAYABLI_WEBHOOK_SECRET  The exact header value you configure on the Payabli
+#                           notification via webHeaderParameters, e.g. "Bearer <random>"
+#   RELAY_DATA_KEY          32+ chars; encrypts buffered payloads at rest (AES-256-GCM)
+#   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` masking action.
+#                           Never leaves this appliance.
+
+endclose:
+  base_url: https://api.endclose.com/v1
+  api_key_env: ENDCLOSE_API_KEY
+
+ingest:
+  port: 8443
+  host: 0.0.0.0
+
+storage:
+  db_path: /var/lib/endclose-relay/relay.db
+
+routes:
+  # ── Payabli: settlement funded ──────────────────────────────────────────────
+  # Payabli notification: payout_batch_settlement_funded  (payload Event: TransferFunded)
+  - id: payabli-settlements
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+      allowed_ips:
+        - 54.166.54.170 # Payabli production egress IP (sandbox: 52.3.204.115)
+    filter:
+      event_types: ["TransferFunded"]
+    mask:
+      # allowlist: ONLY the fields below ever leave your network (as record metadata).
+      mode: allowlist
+      allow:
+        - /batchId
+        - /batchNumber
+        - /TotalAmount
+        - /RtAmount
+        - /entryPoint
+        - /Paypoint
+    map:
+      data_stream_key: payabli_settlements_funded
+      external_id_pointer: /transferId
+      amount_pointer: /NetAmount
+      direction: credit
+      date_pointer: /transferTime
+      date_format: mdy_hms # Payabli sends "M/D/YYYY H:mm:ss"
+
+  # ── Payabli: batch paid ─────────────────────────────────────────────────────
+  # Payabli notification: payout_batch_paid  (payload Event: PayOutBatchPaid)
+  - id: payabli-batches
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+      allowed_ips:
+        - 54.166.54.170
+    filter:
+      event_types: ["PayOutBatchPaid"]
+    mask:
+      mode: allowlist
+      allow:
+        - /Method
+        - /entryPoint
+        - /Paypoint
+    map:
+      data_stream_key: payabli_batches_paid
+      external_id_pointer: /BatchId
+      amount_pointer: /TotalAmount
+      direction: debit
+      # No date_pointer: this payload carries no timestamp, so the record date is the
+      # relay's receive date.
