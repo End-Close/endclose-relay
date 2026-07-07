@@ -48,6 +48,33 @@ pnpm relayctl mask preview --config relay.yaml --route payabli-settlements \
 Prints the exact masked output plus a per-field kept/dropped/hashed report. Runs locally;
 nothing is sent anywhere.
 
+## Configuration vs. updates
+
+Your config and End Close's version updates travel on **separate channels that cannot
+touch each other**:
+
+- **Config is yours.** `relay.yaml` lives at an absolute path on your host
+  (`/etc/endclose-relay/` by default), outside anything a deployment tool manages, and is
+  mounted read-only. The relay has no write path to its own config — there is no API, UI,
+  or update mechanism that can modify it. Changing the masking allowlist requires host
+  access, through whatever change process you already use (git + config management,
+  Terraform templating a file, or hand edits — the file is the interface).
+- **Updates are ours.** A new version is a new image tag. Updating = pull + recreate; the
+  container starts against the same mounted config and the same data volume. End Close
+  commits to config-schema compatibility within a major version (additive changes only),
+  and release notes flag anything config-related.
+- **Preflight before you update.** Validate your existing config against a new image
+  before switching to it:
+
+  ```sh
+  docker run --rm -v /etc/endclose-relay:/etc/endclose-relay:ro \
+    ghcr.io/endclose/relay:<new-version> node dist/cli/relayctl.js config validate
+  ```
+
+  Schema problems exit non-zero and name the offending field.
+- **Undeploy ≠ update.** A fleet-manager undeploy (`docker compose down -v`) deletes the
+  buffered-events volume. It's a killswitch, not an upgrade path.
+
 ## Development
 
 ```sh

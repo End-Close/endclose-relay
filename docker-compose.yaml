@@ -1,9 +1,18 @@
 # endclose-relay — self-hosted webhook relay appliance.
 #
-# 1. Copy relay.example.yaml to relay.yaml and adjust routes/masking with End Close.
+# 1. Put your config at /etc/endclose-relay/relay.yaml (start from relay.example.yaml,
+#    review routes/masking with End Close). Override the location with RELAY_CONFIG_DIR.
 # 2. Create .env with: ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY,
 #    MASKING_HMAC_KEY (see relay.example.yaml header).
 # 3. docker compose up -d
+#
+# Config vs. updates: your config lives at an absolute host path OUTSIDE this compose
+# project directory, and the relay only ever reads it. Version updates replace the image
+# and nothing else — they cannot touch your config or secrets. Before approving an
+# update, you can preflight your config against the new image:
+#
+#   docker run --rm -v /etc/endclose-relay:/etc/endclose-relay:ro \
+#     ghcr.io/endclose/relay:<new-version> node dist/cli/relayctl.js config validate
 #
 # Egress required: api.endclose.com:443 (plus your image registry for pulls). Nothing else.
 services:
@@ -17,7 +26,7 @@ services:
     environment:
       RELAY_CONFIG: /etc/endclose-relay/relay.yaml
     volumes:
-      - ./relay.yaml:/etc/endclose-relay/relay.yaml:ro
+      - ${RELAY_CONFIG_DIR:-/etc/endclose-relay}/relay.yaml:/etc/endclose-relay/relay.yaml:ro
       - relay-data:/var/lib/endclose-relay
     read_only: true
     tmpfs:
@@ -31,4 +40,7 @@ services:
       retries: 3
 
 volumes:
+  # Holds the encrypted store-and-forward buffer. Note: a fleet-manager "undeploy"
+  # (e.g. Distr runs `docker compose down -v`) REMOVES this volume — undeploying is a
+  # killswitch, not an update path. Updates are `docker compose pull && up -d`.
   relay-data:
