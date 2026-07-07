@@ -1,7 +1,7 @@
 # endclose-relay
 
 A small self-hosted webhook relay appliance for [End Close](https://endclose.com) customers
-who don't want to grant End Close direct access to their payment processors.
+who don't want to grant End Close direct access to their payment processors or internal systems.
 
 Payment-processor webhooks (Payabli first) point at the relay inside **your** infrastructure.
 The relay:
@@ -54,8 +54,13 @@ nothing is sent anywhere.
 pnpm install
 pnpm test        # unit + integration (mock End Close API)
 pnpm typecheck
-pnpm dev         # needs RELAY_CONFIG + the env vars above
+pnpm dev:all     # mprocs: relay (watch mode) + mock End Close API
 ```
+
+`pnpm dev:all` starts [mprocs](https://github.com/pvolok/mprocs) with the relay in watch
+mode (dev config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`) and a mock End Close
+API that prints every record the relay forwards. Select the `webhooks` process and press
+`s` to fire the Payabli fixture webhooks at the relay; `test` runs vitest in watch mode.
 
 ## Egress
 

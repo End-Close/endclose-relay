@@ -1,0 +1,58 @@
+# Local development config (used by mprocs). Points at the mock End Close server and a
+# local SQLite file; no IP allowlists so you can curl from localhost.
+endclose:
+  base_url: http://127.0.0.1:4100/v1
+  api_key_env: ENDCLOSE_API_KEY
+
+ingest:
+  port: 8443
+  host: 127.0.0.1
+
+storage:
+  db_path: ./data/dev.db
+
+routes:
+  - id: payabli-settlements
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+    filter:
+      event_types: ["TransferFunded"]
+    mask:
+      mode: allowlist
+      allow:
+        - /batchId
+        - /batchNumber
+        - /TotalAmount
+        - /RtAmount
+        - /entryPoint
+        - /Paypoint
+    map:
+      data_stream_key: payabli_settlements_funded
+      external_id_pointer: /transferId
+      amount_pointer: /NetAmount
+      direction: credit
+      date_pointer: /transferTime
+      date_format: mdy_hms
+
+  - id: payabli-batches
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+    filter:
+      event_types: ["PayOutBatchPaid"]
+    mask:
+      mode: allowlist
+      allow:
+        - /Method
+        - /entryPoint
+        - /Paypoint
+    map:
+      data_stream_key: payabli_batches_paid
+      external_id_pointer: /BatchId
+      amount_pointer: /TotalAmount
+      direction: debit
