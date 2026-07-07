@@ -88,7 +88,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
     const eventId = adapter.extractEventId(body, raw, route)
     const eventType = adapter.extractEventType(body, raw, route)
-    const filtered = route.filter && !eventTypeMatches(route.filter.event_types, eventType)
+    const filtered = route.events && !eventTypeMatches(route.events, eventType)
 
     const { ciphertext, iv } = encrypt(dataKey, rawBody)
     const headersJson = JSON.stringify(

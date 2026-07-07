@@ -1,8 +1,8 @@
-import { REDACTED } from './engine.js'
+// Hard denylist: applied to every mapped value in every route, not configurable. If one
+// of these patterns fires on data a customer legitimately needs, the answer is a
+// deliberate code change here — never a config override.
 
-// Hard denylist: applied in every mode, not configurable. If one of these patterns fires
-// on data a customer legitimately needs, the answer is a deliberate code change here —
-// never a config override.
+export const REDACTED = '[REDACTED]'
 
 const SENSITIVE_KEY_RE =
   /(^|_|\b)(cvv2?|cvc|cid|pin|password|passwd|secret|api[-_]?key|private[-_]?key|access[-_]?token|refresh[-_]?token|ssn|social[-_]?security|routing[-_]?number|account[-_]?number)($|_|\b)/i
@@ -41,4 +41,16 @@ export function hardDenyValue(value: string): string {
     return candidate
   })
   return out
+}
+
+/** Recursively apply hardDenyValue to every string inside a mapped JSON value. */
+export function hardDenyDeep<T>(value: T): T {
+  if (typeof value === 'string') return hardDenyValue(value) as T
+  if (Array.isArray(value)) return value.map(hardDenyDeep) as T
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, hardDenyDeep(v)]),
+    ) as T
+  }
+  return value
 }

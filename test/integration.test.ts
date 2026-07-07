@@ -145,9 +145,10 @@ describe('ingest → store → forward', () => {
       direction: 'credit',
       date: '2026-07-03',
     })
-    // masked: raw NetAmount/transferId are not in metadata; allowlisted fields are
-    expect(settlement.metadata).toHaveProperty('batchNumber')
+    // only mapped fields appear in metadata, under their configured output names
+    expect(settlement.metadata).toHaveProperty('batch_number')
     expect(settlement.metadata).not.toHaveProperty('transferId')
+    expect(settlement.metadata).not.toHaveProperty('NetAmount')
     for (const p of posts) expect(JSON.parse(p.body).on_conflict).toBe('skip')
 
     const batch = allRecords.find((r: any) => r.data_stream_key === 'payabli_batches_paid')

@@ -8,8 +8,13 @@
 #   PAYABLI_WEBHOOK_SECRET  The exact header value you configure on the Payabli
 #                           notification via webHeaderParameters, e.g. "Bearer <random>"
 #   RELAY_DATA_KEY          32+ chars; encrypts buffered payloads at rest (AES-256-GCM)
-#   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` masking action.
+#   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` transform.
 #                           Never leaves this appliance.
+#
+# The `map` block of each route is the complete answer to "what leaves our network":
+# only fields named there are forwarded, ever. Paths are dot notation into the payload
+# (batchId, batch.id, transactions.*.id). Preview any route locally with:
+#   relayctl map preview --route <id> --sample <payload.json>
 
 endclose:
   base_url: https://api.endclose.com/v1
@@ -33,25 +38,20 @@ routes:
       secret_env: PAYABLI_WEBHOOK_SECRET
       allowed_ips:
         - 54.166.54.170 # Payabli production egress IP (sandbox: 52.3.204.115)
-    filter:
-      event_types: ["TransferFunded"]
-    mask:
-      # allowlist: ONLY the fields below ever leave your network (as record metadata).
-      mode: allowlist
-      allow:
-        - /batchId
-        - /batchNumber
-        - /TotalAmount
-        - /RtAmount
-        - /entryPoint
-        - /Paypoint
+    events: ["TransferFunded"]
     map:
       data_stream_key: payabli_settlements_funded
-      external_id_pointer: /transferId
-      amount_pointer: /NetAmount
+      external_id: transferId
+      amount: NetAmount # string dollars; converted to integer cents
       direction: credit
-      date_pointer: /transferTime
-      date_format: mdy_hms # Payabli sends "M/D/YYYY H:mm:ss"
+      date: { source: transferTime, format: mdy_hms } # Payabli sends "M/D/YYYY H:mm:ss"
+      metadata:
+        batch_id: batchId
+        batch_number: batchNumber
+        total_amount: TotalAmount
+        return_amount: RtAmount
+        entry_point: entryPoint
+        paypoint: Paypoint
 
   # ── Payabli: batch paid ─────────────────────────────────────────────────────
   # Payabli notification: payout_batch_paid  (payload Event: PayOutBatchPaid)
@@ -63,18 +63,14 @@ routes:
       secret_env: PAYABLI_WEBHOOK_SECRET
       allowed_ips:
         - 54.166.54.170
-    filter:
-      event_types: ["PayOutBatchPaid"]
-    mask:
-      mode: allowlist
-      allow:
-        - /Method
-        - /entryPoint
-        - /Paypoint
+    events: ["PayOutBatchPaid"]
     map:
       data_stream_key: payabli_batches_paid
-      external_id_pointer: /BatchId
-      amount_pointer: /TotalAmount
+      external_id: BatchId
+      amount: TotalAmount
       direction: debit
-      # No date_pointer: this payload carries no timestamp, so the record date is the
-      # relay's receive date.
+      # No date: this payload carries no timestamp, so the record is dated by receive time.
+      metadata:
+        method: Method
+        entry_point: entryPoint
+        paypoint: Paypoint

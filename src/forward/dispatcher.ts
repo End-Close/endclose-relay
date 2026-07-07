@@ -107,7 +107,7 @@ export class Dispatcher {
         const payload = JSON.parse(
           decrypt(this.deps.dataKey, event.payload_enc, event.payload_iv).toString('utf8'),
         ) as Json
-        records.push(mapEvent(route, payload, event.received_at, this.deps.maskingKey))
+        records.push(mapEvent(route, payload, event.received_at, this.deps.maskingKey).record)
         mapped.push(event)
       } catch (err) {
         if (err instanceof MappingError) {

@@ -22,8 +22,8 @@ const payabliRoute = routeSchema.parse({
   },
   map: {
     data_stream_key: 'x',
-    external_id_pointer: '/transferId',
-    amount_pointer: '/NetAmount',
+    external_id: 'transferId',
+    amount: 'NetAmount',
     direction: 'credit',
   },
 })
@@ -76,12 +76,12 @@ describe('generic hmac adapter', () => {
       secret_env: 'GENERIC_SECRET',
       signed_content: 'timestamp.body',
       timestamp_header: 'x-timestamp',
-      event_id_pointer: '/id',
+      event_id: 'id',
     },
     map: {
       data_stream_key: 'x',
-      external_id_pointer: '/id',
-      amount_pointer: '/amount',
+      external_id: 'id',
+      amount: 'amount',
       direction: 'credit',
     },
   })

@@ -18,24 +18,20 @@ routes:
       mode: static_header
       header: authorization
       secret_env: PAYABLI_WEBHOOK_SECRET
-    filter:
-      event_types: ["TransferFunded"]
-    mask:
-      mode: allowlist
-      allow:
-        - /batchId
-        - /batchNumber
-        - /TotalAmount
-        - /RtAmount
-        - /entryPoint
-        - /Paypoint
+    events: ["TransferFunded"]
     map:
       data_stream_key: payabli_settlements_funded
-      external_id_pointer: /transferId
-      amount_pointer: /NetAmount
+      external_id: transferId
+      amount: NetAmount
       direction: credit
-      date_pointer: /transferTime
-      date_format: mdy_hms
+      date: { source: transferTime, format: mdy_hms }
+      metadata:
+        batch_id: batchId
+        batch_number: batchNumber
+        total_amount: TotalAmount
+        return_amount: RtAmount
+        entry_point: entryPoint
+        paypoint: Paypoint
 
   - id: payabli-batches
     source: payabli
@@ -43,16 +39,13 @@ routes:
       mode: static_header
       header: authorization
       secret_env: PAYABLI_WEBHOOK_SECRET
-    filter:
-      event_types: ["PayOutBatchPaid"]
-    mask:
-      mode: allowlist
-      allow:
-        - /Method
-        - /entryPoint
-        - /Paypoint
+    events: ["PayOutBatchPaid"]
     map:
       data_stream_key: payabli_batches_paid
-      external_id_pointer: /BatchId
-      amount_pointer: /TotalAmount
+      external_id: BatchId
+      amount: TotalAmount
       direction: debit
+      metadata:
+        method: Method
+        entry_point: entryPoint
+        paypoint: Paypoint

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { resolveSecret } from '../../config/load.js'
 import type { RouteConfig } from '../../config/schema.js'
-import { getAtPointer, type Json } from '../../mask/paths.js'
+import { getAtPath, type Json } from '../../mask/paths.js'
 import { headerValue, type ProcessorAdapter, type RawRequest, type VerifyResult } from './types.js'
 
 // Payabli does not sign webhooks. Trust boundary: a customer-defined static header
@@ -21,9 +21,9 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 // Stable-ID field per payload Event type, per Payabli's OpenAPI webhook schemas.
-const EVENT_ID_POINTERS: Record<string, string> = {
-  TransferFunded: '/transferId', // payout_batch_settlement_funded
-  PayOutBatchPaid: '/BatchId', // payout_batch_paid
+const EVENT_ID_PATHS: Record<string, string> = {
+  TransferFunded: 'transferId', // payout_batch_settlement_funded
+  PayOutBatchPaid: 'BatchId', // payout_batch_paid
 }
 
 export const payabliAdapter: ProcessorAdapter = {
@@ -44,11 +44,11 @@ export const payabliAdapter: ProcessorAdapter = {
   },
 
   extractEventId(body: Json, req: RawRequest): string {
-    const eventType = getAtPointer(body, '/Event')
+    const eventType = getAtPath(body, 'Event')
     if (typeof eventType === 'string') {
-      const pointer = EVENT_ID_POINTERS[eventType]
-      if (pointer) {
-        const id = getAtPointer(body, pointer)
+      const path = EVENT_ID_PATHS[eventType]
+      if (path) {
+        const id = getAtPath(body, path)
         if (typeof id === 'string' && id.length > 0) return `${eventType}:${id}`
       }
     }
@@ -56,7 +56,7 @@ export const payabliAdapter: ProcessorAdapter = {
   },
 
   extractEventType(body: Json): string | null {
-    const t = getAtPointer(body, '/Event')
+    const t = getAtPath(body, 'Event')
     return typeof t === 'string' ? t : null
   },
 }

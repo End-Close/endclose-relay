@@ -9,12 +9,13 @@ The relay:
 1. **Verifies** each webhook (static-header + source-IP for Payabli; HMAC for processors that sign).
 2. **Persists it durably** (encrypted, SQLite `synchronous=FULL`) *before* acknowledging — no
    data loss if End Close is unreachable.
-3. **Masks** the payload with declarative allowlist rules — nothing leaves your network unless
-   the config names it, and a non-configurable hard denylist (PANs, CVV, ACH numbers, SSNs,
-   secret-named keys) applies on top in every mode.
-4. **Maps + forwards** events as records to End Close's public API
-   (`POST /v1/records/bulk`, `X-API-KEY`), with exponential-backoff retries and idempotency
-   at both ends. Failed events park visibly; they are never silently dropped.
+3. **Maps** each event to an End Close record through an explicit field map — the map *is*
+   the allowlist: nothing leaves your network unless a field is named in it (optionally
+   hashed with an appliance-local key). A non-configurable hard denylist (PANs, SSNs,
+   CVV/account-number-named fields) applies on top of every mapped value.
+4. **Forwards** records to End Close's public API (`POST /v1/records/bulk`, `X-API-KEY`),
+   with exponential-backoff retries and idempotency at both ends. Failed events park
+   visibly; they are never silently dropped.
 
 You hold the killswitches: `pause` (buffer locally, forward nothing) and `panic` (refuse
 ingest entirely). Neither can be flipped remotely — End Close's visibility into the relay is
@@ -41,12 +42,13 @@ Then configure the Payabli notifications (`payout_batch_settlement_funded`,
 ## Preview what leaves your network
 
 ```sh
-pnpm relayctl mask preview --config relay.yaml --route payabli-settlements \
+pnpm relayctl map preview --config relay.yaml --route payabli-settlements \
   --sample test/fixtures/payabli-settlement-funded.json
 ```
 
-Prints the exact masked output plus a per-field kept/dropped/hashed report. Runs locally;
-nothing is sent anywhere.
+Prints the exact End Close record that would be forwarded, which source field each output
+came from, and every payload field that is **not** forwarded. Runs locally; nothing is
+sent anywhere.
 
 ## Configuration vs. updates
 

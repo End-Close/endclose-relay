@@ -45,7 +45,12 @@ describe('mapEvent', () => {
   const batchesRoute = config.routes[1]!
 
   it('maps settlement funded to an End Close record', () => {
-    const record = mapEvent(settlementsRoute, settlement, '2026-07-03T14:25:00Z', MASKING_KEY)
+    const { record, report } = mapEvent(
+      settlementsRoute,
+      settlement,
+      '2026-07-03T14:25:00Z',
+      MASKING_KEY,
+    )
     expect(record).toMatchObject({
       data_stream_key: 'payabli_settlements_funded',
       external_id: 'trf_9f8e7d6c',
@@ -53,17 +58,22 @@ describe('mapEvent', () => {
       direction: 'credit',
       date: '2026-07-03',
     })
-    // metadata is exactly the allowlisted set
-    expect(Object.keys(record.metadata).sort()).toEqual(
-      ['Paypoint', 'RtAmount', 'TotalAmount', 'batchId', 'batchNumber', 'entryPoint'].sort(),
-    )
-    // the raw transferId/NetAmount/transferTime do not additionally leak via metadata
-    expect(record.metadata).not.toHaveProperty('transferId')
-    expect(record.metadata).not.toHaveProperty('NetAmount')
+    // metadata is exactly the mapped set, under the configured output names
+    expect(record.metadata).toEqual({
+      batch_id: '87',
+      batch_number: 'b2f6a3e0-4c1d-4e8a-9b7f-1a2b3c4d5e6f',
+      total_amount: '3,800.00',
+      return_amount: '0.00',
+      entry_point: 'acme-main',
+      paypoint: 'Acme Field Services',
+    })
+    // unmapped payload fields are reported as staying local
+    expect(report.not_forwarded).toEqual(expect.arrayContaining(['Text', 'ContactUs']))
+    expect(report.not_forwarded).not.toContain('transferId')
   })
 
   it('maps batch paid; date falls back to received_at (payload has no timestamp)', () => {
-    const record = mapEvent(batchesRoute, batchPaid, '2026-07-04T09:00:00Z', MASKING_KEY)
+    const { record, report } = mapEvent(batchesRoute, batchPaid, '2026-07-04T09:00:00Z', MASKING_KEY)
     expect(record).toMatchObject({
       data_stream_key: 'payabli_batches_paid',
       external_id: '341',
@@ -72,10 +82,11 @@ describe('mapEvent', () => {
       date: '2026-07-04',
     })
     expect(record.metadata).toEqual({
-      Method: 'ach',
-      entryPoint: 'acme-main',
-      Paypoint: 'Acme Field Services',
+      method: 'ach',
+      entry_point: 'acme-main',
+      paypoint: 'Acme Field Services',
     })
+    expect(report.mapped['date']).toBe('(receive time)')
   })
 
   it('parks unmappable payloads via MappingError', () => {

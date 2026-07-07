@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { resolveSecret } from '../../config/load.js'
 import type { RouteConfig } from '../../config/schema.js'
-import { getAtPointer, type Json } from '../../mask/paths.js'
+import { getAtPath, type Json } from '../../mask/paths.js'
 import { headerValue, type ProcessorAdapter, type RawRequest, type VerifyResult } from './types.js'
 
 // Generic HMAC-signature adapter: covers processors that sign `body` or `timestamp.body`
@@ -49,16 +49,16 @@ export const genericHmacAdapter: ProcessorAdapter = {
   },
 
   extractEventId(body: Json, req: RawRequest, route: RouteConfig): string {
-    if (route.auth.mode === 'hmac' && route.auth.event_id_pointer) {
-      const id = getAtPointer(body, route.auth.event_id_pointer)
+    if (route.auth.mode === 'hmac' && route.auth.event_id) {
+      const id = getAtPath(body, route.auth.event_id)
       if ((typeof id === 'string' && id.length > 0) || typeof id === 'number') return String(id)
     }
     return 'sha256:' + createHash('sha256').update(req.rawBody).digest('hex')
   },
 
   extractEventType(body: Json, _req: RawRequest, route: RouteConfig): string | null {
-    if (route.auth.mode === 'hmac' && route.auth.event_type_pointer) {
-      const t = getAtPointer(body, route.auth.event_type_pointer)
+    if (route.auth.mode === 'hmac' && route.auth.event_type) {
+      const t = getAtPath(body, route.auth.event_type)
       return typeof t === 'string' ? t : null
     }
     return null

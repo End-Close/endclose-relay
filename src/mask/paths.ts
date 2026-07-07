@@ -1,38 +1,36 @@
-// JSON-Pointer-style paths with `*` wildcards. A path like /transactions/*/Id matches
-// any array index or object key at the wildcard position.
+// Dot-notation paths into JSON documents: "batchId", "batch.id", "transactions.*.id".
+// A `*` segment fans out over every array element (or object value) and the result is
+// the array of matches.
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 
-export function parsePointer(pointer: string): string[] {
-  if (!pointer.startsWith('/')) throw new Error(`invalid pointer: ${pointer}`)
-  return pointer
-    .slice(1)
-    .split('/')
-    .map((s) => s.replaceAll('~1', '/').replaceAll('~0', '~'))
+export function getAtPath(doc: Json, path: string): Json | undefined {
+  return getSegments(doc, path.split('.'))
 }
 
-export function pointerToString(segments: string[]): string {
-  return '/' + segments.map((s) => s.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')
-}
-
-export function segmentsMatch(pattern: string[], path: string[]): boolean {
-  if (pattern.length !== path.length) return false
-  return pattern.every((p, i) => p === '*' || p === path[i])
-}
-
-/** True when `path` is `pattern` itself or lies underneath it. */
-export function matchesOrIsUnder(pattern: string[], path: string[]): boolean {
-  if (path.length < pattern.length) return false
-  return pattern.every((p, i) => p === '*' || p === path[i])
-}
-
-/** Get the value at a concrete (wildcard-free) pointer; undefined when absent. */
-export function getAtPointer(doc: Json, pointer: string): Json | undefined {
-  let cur: Json | undefined = doc
-  for (const seg of parsePointer(pointer)) {
-    if (cur === null || typeof cur !== 'object') return undefined
-    cur = Array.isArray(cur) ? cur[Number(seg)] : (cur as { [k: string]: Json })[seg]
-    if (cur === undefined) return undefined
+function getSegments(node: Json, segments: string[]): Json | undefined {
+  if (segments.length === 0) return node
+  const [head, ...rest] = segments
+  if (node === null || typeof node !== 'object') return undefined
+  if (head === '*') {
+    const children = Array.isArray(node) ? node : Object.values(node)
+    const out = children
+      .map((c) => getSegments(c, rest))
+      .filter((v): v is Json => v !== undefined)
+    return out
   }
-  return cur
+  const child = Array.isArray(node)
+    ? node[Number(head)]
+    : (node as { [k: string]: Json })[head!]
+  return child === undefined ? undefined : getSegments(child, rest)
+}
+
+/** All leaf paths of a document, dot-notation — used for the "not forwarded" report. */
+export function leafPaths(doc: Json, prefix = ''): string[] {
+  if (doc === null || typeof doc !== 'object') return prefix ? [prefix] : []
+  const entries = Array.isArray(doc)
+    ? doc.map((v, i) => [String(i), v] as const)
+    : Object.entries(doc)
+  if (entries.length === 0) return prefix ? [prefix] : []
+  return entries.flatMap(([k, v]) => leafPaths(v, prefix ? `${prefix}.${k}` : k))
 }

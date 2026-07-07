@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// relayctl — local admin CLI. M1 ships `mask preview` and `config validate`;
+// relayctl — local admin CLI. M1 ships `map preview` and `config validate`;
 // status/killswitch/replay land in M2.
 import { readFileSync } from 'node:fs'
 import { parseConfig } from '../config/load.js'
 import { deriveKey } from '../crypto/keys.js'
-import { mask } from '../mask/engine.js'
+import { mapEvent } from '../forward/mapper.js'
 import type { Json } from '../mask/paths.js'
 import type { RelayConfig } from '../config/schema.js'
 
 function usage(): never {
   console.error(`usage:
   relayctl config validate [--config <relay.yaml>]
-  relayctl mask preview --route <route-id> --sample <sample.json> [--config <relay.yaml>]
+  relayctl map preview --route <route-id> --sample <sample.json> [--config <relay.yaml>]
 
 config validate
   Parses and schema-checks the config, then reports whether every referenced secret
@@ -19,9 +19,9 @@ config validate
   schema errors exit non-zero. Unset env vars are reported but don't fail validation
   (they may simply not be exported in your shell).
 
-mask preview
-  Runs the route's masking rules against a sample payload and prints exactly what
-  would leave the network (the record metadata) plus a per-field report. Local only.
+map preview
+  Runs the route's map against a sample payload and prints the exact End Close record
+  that would leave the network, plus which payload fields are NOT forwarded. Local only.
 
 The config path defaults to $RELAY_CONFIG, then /etc/endclose-relay/relay.yaml.`)
   process.exit(2)
@@ -63,7 +63,7 @@ function configValidate(): void {
   }
 }
 
-function maskPreview(): void {
+function mapPreview(): void {
   const { config } = loadCliConfig()
   const routeId = requireArg('route')
   const route = config.routes.find((r) => r.id === routeId)
@@ -80,11 +80,11 @@ function maskPreview(): void {
     process.env.MASKING_HMAC_KEY ?? 'preview-only-key',
   )
 
-  const { output, report } = mask(route.mask, sample, maskingKey)
-  console.log(JSON.stringify({ route: routeId, output, report }, null, 2))
+  const { record, report } = mapEvent(route, sample, new Date().toISOString(), maskingKey)
+  console.log(JSON.stringify({ route: routeId, record, report }, null, 2))
 }
 
 const [, , cmd, sub] = process.argv
 if (cmd === 'config' && sub === 'validate') configValidate()
-else if (cmd === 'mask' && sub === 'preview') maskPreview()
+else if (cmd === 'map' && sub === 'preview') mapPreview()
 else usage()
