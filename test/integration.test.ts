@@ -66,6 +66,9 @@ class MockEndClose {
   }
 
   async close(): Promise<void> {
+    // Sever pooled keep-alive connections from the relay's fetch client; otherwise
+    // close() waits for them to idle out and the vitest process can linger.
+    this.server.closeAllConnections()
     await new Promise((r) => this.server.close(r))
   }
 }
