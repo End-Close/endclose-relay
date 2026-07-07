@@ -21,6 +21,31 @@ You hold the killswitches: `pause` (buffer locally, forward nothing) and `panic`
 ingest entirely). Neither can be flipped remotely — End Close's visibility into the relay is
 read-only and metadata-only.
 
+## Operations
+
+Everything operational goes through `relayctl` (backed by a loopback-only admin API on
+`:8081` — the security boundary is host access; End Close cannot reach it):
+
+```sh
+relayctl status                      # queues, killswitch, per-route delivery state
+relayctl pause | resume | panic      # global killswitch (per-route: --route <id>)
+relayctl events ls --status parked   # inspect events (payloads never shown)
+relayctl events replay --parked      # re-queue parked events
+relayctl audit export                # append-only audit log as JSONL
+relayctl config plan | apply         # diff/apply an edited relay.yaml without restart
+```
+
+In Docker: `docker compose exec relay node dist/cli/relayctl.js status`.
+
+A read-only status page is served at `http://127.0.0.1:8081/`, and Prometheus metrics +
+`/healthz` `/readyz` probes at `:9090` (optional basic auth via `METRICS_BASIC_AUTH`):
+`relay_ingest_total`, `relay_forward_total`, `relay_queue_depth`,
+`relay_delivery_lag_seconds`, `relay_killswitch_state`, `relay_db_bytes`.
+
+Retention: payloads of delivered/filtered events are wiped after 7 days and their rows
+(the idempotency ledger) deleted after 30 (`retention:` in relay.yaml). Parked events are
+kept until replayed — never silently dropped.
+
 ## Quick start
 
 ```sh

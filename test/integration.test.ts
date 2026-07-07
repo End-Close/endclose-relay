@@ -103,8 +103,9 @@ describe('ingest → store → forward', () => {
       dataKey: DATA_KEY,
       maskingKey: MASKING_KEY,
       signal: setup.signal,
+      metrics: setup.metrics,
     })
-    ingest = buildIngestServer({ db, dataKey: DATA_KEY, signal: setup.signal })
+    ingest = buildIngestServer({ db, dataKey: DATA_KEY, signal: setup.signal, metrics: setup.metrics })
     await ingest.ready()
     dispatcher.start()
   })

@@ -22,6 +22,11 @@ services:
     restart: unless-stopped
     ports:
       - "8443:8443" # webhook ingest — front with your own TLS terminator / LB
+      # Optional: expose Prometheus metrics + health probes to your monitoring network.
+      # - "9090:9090"
+      # The admin plane (:8081, killswitches/status/replay) binds to the container's
+      # loopback and is intentionally NOT exposable via ports. Use:
+      #   docker compose exec relay node dist/cli/relayctl.js status
     env_file: .env
     environment:
       RELAY_CONFIG: /etc/endclose-relay/relay.yaml

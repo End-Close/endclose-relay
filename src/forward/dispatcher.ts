@@ -6,6 +6,7 @@ import { RoutesRepo } from '../db/repo/routes.js'
 import { KvRepo } from '../db/repo/kv.js'
 import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
+import type { Metrics } from '../metrics/metrics.js'
 import { log } from '../log.js'
 import { nextAttemptAt } from './backoff.js'
 import { mapEvent, MappingError, type EndCloseRecord } from './mapper.js'
@@ -27,7 +28,10 @@ export interface DispatcherDeps {
   dataKey: Buffer
   maskingKey: Buffer
   signal: EventEmitter
+  metrics: Metrics
 }
+
+const PRUNE_INTERVAL_MS = 3600_000
 
 export class Dispatcher {
   private events: EventsRepo
@@ -77,10 +81,21 @@ export class Dispatcher {
     })
   }
 
+  private lastPruneAt = 0
+
   private async cycle(): Promise<void> {
+    const now = new Date().toISOString()
+    if (Date.now() - this.lastPruneAt > PRUNE_INTERVAL_MS) {
+      this.lastPruneAt = Date.now()
+      const { retention } = this.deps.config
+      const { wiped, deleted } = this.events.prune(now, retention.delivered_days, retention.ledger_days)
+      this.deps.metrics.pruned('wiped', wiped)
+      this.deps.metrics.pruned('deleted', deleted)
+      if (wiped || deleted) log.info('retention prune', { wiped, deleted })
+    }
+
     if (this.kv.globalKillswitch() !== 'none') return // pause/panic: buffer, do not forward
 
-    const now = new Date().toISOString()
     this.events.parkExpired(now, this.deps.config.dispatch.park_after_ms)
 
     for (const routeId of this.events.routesWithDueEvents(now)) {
@@ -112,6 +127,7 @@ export class Dispatcher {
       } catch (err) {
         if (err instanceof MappingError) {
           this.events.markParked([event.id], `mapping failed: ${err.message}`)
+          this.deps.metrics.forward(routeId, 'parked')
           log.warn('event parked: mapping failed', { route: routeId, event_id: event.event_id })
         } else {
           throw err
@@ -132,6 +148,7 @@ export class Dispatcher {
       const ids = mapped.map((e) => e.id)
       if (err instanceof PermanentHttpError && (err.status === 400 || err.status === 422)) {
         this.events.markParked(ids, `${err.message}: ${err.body}`)
+        this.deps.metrics.forward(routeId, 'parked', ids.length)
         log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
       } else {
         // Transient network failure, 5xx, or auth problem (fixable server-side or in
@@ -143,6 +160,7 @@ export class Dispatcher {
           this.deps.config.dispatch.backoff_cap_ms,
         )
         this.events.markFailed(ids, next, (err as Error).message)
+        this.deps.metrics.forward(routeId, 'retried', ids.length)
         log.warn('batch delivery failed, will retry', {
           route: routeId,
           events: ids.length,
@@ -191,14 +209,16 @@ export class Dispatcher {
           .map((r: BulkResultItem) => r.external_id ?? String(r.index)),
       )
       if (failed.size === 0) break
-      const parked: number[] = []
-      const ok: number[] = []
+      const parked: EventRow[] = []
+      const ok: EventRow[] = []
       mapped.forEach((event, index) => {
         const key = extResultKey(event, index)
-        ;(failed.has(key.externalId) || failed.has(key.index) ? parked : ok).push(event.id)
+        ;(failed.has(key.externalId) || failed.has(key.index) ? parked : ok).push(event)
       })
-      this.events.markParked(parked, 'rejected by End Close bulk processing')
-      this.events.markDelivered(ok, deliveredAt, bulkRequestId)
+      this.events.markParked(parked.map((e) => e.id), 'rejected by End Close bulk processing')
+      this.events.markDelivered(ok.map((e) => e.id), deliveredAt, bulkRequestId)
+      this.recordDelivered(ok, deliveredAt)
+      for (const e of parked) this.deps.metrics.forward(e.route_id, 'parked')
       return
     }
     this.events.markDelivered(
@@ -206,6 +226,14 @@ export class Dispatcher {
       deliveredAt,
       bulkRequestId,
     )
+    this.recordDelivered(mapped, deliveredAt)
+  }
+
+  private recordDelivered(events: EventRow[], deliveredAt: string): void {
+    for (const e of events) {
+      this.deps.metrics.forward(e.route_id, 'delivered')
+      this.deps.metrics.observeDeliveryLag(e.received_at, deliveredAt)
+    }
   }
 }
 

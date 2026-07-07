@@ -6,6 +6,9 @@ import { migrate } from '../src/db/migrate.js'
 import { parseConfig } from '../src/config/load.js'
 import { applyConfig } from '../src/config/apply.js'
 import { deriveKey } from '../src/crypto/keys.js'
+import { Metrics } from '../src/metrics/metrics.js'
+import { EventsRepo } from '../src/db/repo/events.js'
+import { KvRepo } from '../src/db/repo/kv.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -61,14 +64,21 @@ routes:
         paypoint: Paypoint
 `
 
-export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter } {
+export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics: Metrics } {
   process.env.ENDCLOSE_API_KEY = 'test-api-key'
   process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer test-webhook-secret'
   const db = openDb(':memory:')
   migrate(db)
   const loaded = parseConfig(TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort)))
   applyConfig(db, loaded, 'test')
-  return { db, signal: new EventEmitter() }
+  const events = new EventsRepo(db)
+  const kv = new KvRepo(db)
+  const metrics = new Metrics({
+    queueDepths: () => events.countByStatus(),
+    killswitch: () => kv.globalKillswitch(),
+    dbBytes: () => 0,
+  })
+  return { db, signal: new EventEmitter(), metrics }
 }
 
 export function testConfig(ecPort = 9999) {

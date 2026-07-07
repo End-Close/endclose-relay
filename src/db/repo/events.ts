@@ -151,4 +151,115 @@ export class EventsRepo {
       )
       .run(cutoff).changes
   }
+
+  perRouteStats(): RouteStats[] {
+    const counts = this.db
+      .prepare('SELECT route_id, status, COUNT(*) AS n FROM events GROUP BY route_id, status')
+      .all() as { route_id: string; status: EventStatus; n: number }[]
+    const extremes = this.db
+      .prepare(
+        `SELECT route_id,
+                MAX(delivered_at) AS last_delivered_at,
+                MIN(CASE WHEN status IN ('pending','retry') THEN received_at END) AS oldest_pending_at
+         FROM events GROUP BY route_id`,
+      )
+      .all() as {
+      route_id: string
+      last_delivered_at: string | null
+      oldest_pending_at: string | null
+    }[]
+    const byRoute = new Map<string, RouteStats>()
+    for (const row of counts) {
+      const stats =
+        byRoute.get(row.route_id) ??
+        ({ route_id: row.route_id, counts: {}, last_delivered_at: null, oldest_pending_at: null } as RouteStats)
+      stats.counts[row.status] = row.n
+      byRoute.set(row.route_id, stats)
+    }
+    for (const row of extremes) {
+      const stats = byRoute.get(row.route_id)
+      if (stats) {
+        stats.last_delivered_at = row.last_delivered_at
+        stats.oldest_pending_at = row.oldest_pending_at
+      }
+    }
+    return [...byRoute.values()]
+  }
+
+  /** Payload-free event listing for the admin plane. */
+  list(filter: { status?: EventStatus; route?: string; limit?: number }): EventSummary[] {
+    const clauses: string[] = []
+    const params: unknown[] = []
+    if (filter.status) {
+      clauses.push('status = ?')
+      params.push(filter.status)
+    }
+    if (filter.route) {
+      clauses.push('route_id = ?')
+      params.push(filter.route)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    return this.db
+      .prepare(
+        `SELECT id, route_id, source, event_id, event_type, received_at, status,
+                attempts, next_attempt_at, delivered_at, bulk_request_id, last_error
+         FROM events ${where} ORDER BY id DESC LIMIT ?`,
+      )
+      .all(...params, filter.limit ?? 50) as EventSummary[]
+  }
+
+  /** Re-queue a parked event. Attempts reset so backoff starts fresh. */
+  replay(id: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE events SET status = 'retry', attempts = 0, next_attempt_at = ?, last_error = NULL
+           WHERE id = ? AND status = 'parked'`,
+        )
+        .run(new Date().toISOString(), id).changes === 1
+    )
+  }
+
+  replayAllParked(): number {
+    return this.db
+      .prepare(
+        `UPDATE events SET status = 'retry', attempts = 0, next_attempt_at = ?, last_error = NULL
+         WHERE status = 'parked'`,
+      )
+      .run(new Date().toISOString()).changes
+  }
+
+  /**
+   * Retention. Terminal events (delivered / dropped_by_filter) lose their payload after
+   * `deliveredDays` (row kept as the idempotency ledger) and the row itself after
+   * `ledgerDays`. Parked events are never touched — they are unresolved by definition.
+   */
+  prune(now: string, deliveredDays: number, ledgerDays: number): { wiped: number; deleted: number } {
+    const wipeCutoff = new Date(Date.parse(now) - deliveredDays * 86_400_000).toISOString()
+    const deleteCutoff = new Date(Date.parse(now) - ledgerDays * 86_400_000).toISOString()
+    const wiped = this.db
+      .prepare(
+        `UPDATE events SET payload_enc = x'', payload_iv = x'', headers_json = '{}'
+         WHERE status IN ('delivered','dropped_by_filter')
+           AND received_at < ? AND length(payload_enc) > 0`,
+      )
+      .run(wipeCutoff).changes
+    const deleted = this.db
+      .prepare(
+        `DELETE FROM events
+         WHERE status IN ('delivered','dropped_by_filter') AND received_at < ?`,
+      )
+      .run(deleteCutoff).changes
+    return { wiped, deleted }
+  }
 }
+
+export interface RouteStats {
+  route_id: string
+  counts: Partial<Record<EventStatus, number>>
+  last_delivered_at: string | null
+  oldest_pending_at: string | null
+}
+
+export type EventSummary = Omit<EventRow, 'payload_enc' | 'payload_iv' | 'headers_json' | 'idempotency_key'>
+

@@ -8,6 +8,7 @@ import { KvRepo } from '../db/repo/kv.js'
 import { encrypt } from '../crypto/at-rest.js'
 import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
+import type { Metrics } from '../metrics/metrics.js'
 import { log } from '../log.js'
 
 // Headers persisted alongside the payload for debugging/replay. Auth headers are
@@ -19,6 +20,7 @@ export interface IngestDeps {
   dataKey: Buffer
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal: EventEmitter
+  metrics: Metrics
 }
 
 function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
@@ -34,7 +36,7 @@ function escapeRe(s: string): string {
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const { db, dataKey, signal } = deps
+  const { db, dataKey, signal, metrics } = deps
   const events = new EventsRepo(db)
   const routes = new RoutesRepo(db)
   const kv = new KvRepo(db)
@@ -60,14 +62,17 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
     // Panic refuses at the door; the processor's own retries carry the window.
     if (kv.globalKillswitch() === 'panic') {
+      metrics.ingest(routeId, 'panic')
       return reply.code(503).send({ error: 'relay is in panic mode' })
     }
 
     const rawBody = request.body as Buffer
     if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+      metrics.ingest(routeId, 'rejected_json')
       return reply.code(400).send({ error: 'empty body' })
     }
     if (rawBody.length > route.max_body_bytes) {
+      metrics.ingest(routeId, 'rejected_size')
       return reply.code(413).send({ error: 'body too large' })
     }
 
@@ -75,6 +80,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     const raw = { rawBody, headers: request.headers, remoteIp: request.ip }
     const verdict = adapter.verify(raw, route)
     if (!verdict.ok) {
+      metrics.ingest(routeId, 'rejected_auth')
       log.warn('ingest rejected', { route: routeId, reason: verdict.reason })
       return reply.code(401).send({ error: 'verification failed' })
     }
@@ -83,6 +89,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     try {
       body = JSON.parse(rawBody.toString('utf8')) as Json
     } catch {
+      metrics.ingest(routeId, 'rejected_json')
       return reply.code(400).send({ error: 'invalid JSON' })
     }
 
@@ -112,10 +119,12 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     })
 
     if (insertedId === null) {
+      metrics.ingest(routeId, 'duplicate')
       log.info('duplicate event acked', { route: routeId, event_type: eventType })
       return reply.code(200).send({ status: 'duplicate' })
     }
 
+    metrics.ingest(routeId, filtered ? 'filtered' : 'accepted')
     log.info('event ingested', {
       route: routeId,
       event_type: eventType,
