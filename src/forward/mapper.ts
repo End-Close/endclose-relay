@@ -1,10 +1,11 @@
 import { createHmac } from 'node:crypto'
 import {
   refSource,
-  refTransform,
+  refTransforms,
   type DateRef,
   type FieldRef,
   type RouteConfig,
+  type TransformName,
 } from '../config/schema.js'
 import { hardDenyDeep } from '../mask/defaults.js'
 import { getAtPath, leafPaths, type Json } from '../mask/paths.js'
@@ -64,10 +65,18 @@ function hashValue(maskingKey: Buffer, value: Json): string {
   return 'hmac256:' + createHmac('sha256', maskingKey).update(raw, 'utf8').digest('hex')
 }
 
+/** trim/lowercase act on strings (elementwise over arrays from wildcard paths); hash consumes anything. */
+function applyTransform(name: TransformName, value: Json, maskingKey: Buffer): Json {
+  if (name === 'hash') return hashValue(maskingKey, value)
+  if (Array.isArray(value)) return value.map((v) => applyTransform(name, v, maskingKey))
+  if (typeof value !== 'string') return value
+  return name === 'trim' ? value.trim() : value.toLowerCase()
+}
+
 function resolve(ref: FieldRef, payload: Json, maskingKey: Buffer): Json | undefined {
-  const value = getAtPath(payload, refSource(ref))
+  let value = getAtPath(payload, refSource(ref))
   if (value === undefined) return undefined
-  if (refTransform(ref) === 'hash') return hashValue(maskingKey, value)
+  for (const t of refTransforms(ref)) value = applyTransform(t, value, maskingKey)
   return value
 }
 
@@ -100,7 +109,7 @@ export function mapEvent(
     const value = resolve(ref, payload, maskingKey)
     if (value === undefined) return undefined
     report.mapped[field] = refSource(ref)
-    if (refTransform(ref) === 'hash') report.hashed.push(field)
+    if (refTransforms(ref).includes('hash')) report.hashed.push(field)
     usedPaths.add(refSource(ref))
     return value
   }

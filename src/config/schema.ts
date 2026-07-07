@@ -7,14 +7,19 @@ const dotPath = z
   .string()
   .regex(/^[^\s.]+(\.[^\s.]+)*$/, 'must be a dot-notation path like batchId or batch.id')
 
-// A mapped field: either a bare source path, or an object with an optional transform.
+export const transformNameSchema = z.enum(['trim', 'lowercase', 'hash'])
+export type TransformName = z.infer<typeof transformNameSchema>
+
+// A mapped field: either a bare source path, or an object with optional transforms
+// (single or array, applied in order).
 //   external_id: transferId
 //   customer_email: { source: CustomerEmail, transform: hash }
+//   customer_email: { source: CustomerEmail, transform: [trim, lowercase, hash] }
 export const fieldRefSchema = z.union([
   dotPath,
   z.object({
     source: dotPath,
-    transform: z.enum(['hash']).optional(),
+    transform: z.union([transformNameSchema, z.array(transformNameSchema).min(1)]).optional(),
   }),
 ])
 export type FieldRef = z.infer<typeof fieldRefSchema>
@@ -22,8 +27,9 @@ export type FieldRef = z.infer<typeof fieldRefSchema>
 export function refSource(ref: FieldRef): string {
   return typeof ref === 'string' ? ref : ref.source
 }
-export function refTransform(ref: FieldRef): 'hash' | undefined {
-  return typeof ref === 'string' ? undefined : ref.transform
+export function refTransforms(ref: FieldRef): TransformName[] {
+  if (typeof ref === 'string' || ref.transform === undefined) return []
+  return Array.isArray(ref.transform) ? ref.transform : [ref.transform]
 }
 
 const dateRefSchema = z.union([
@@ -82,7 +88,7 @@ export const recordMapSchema = z
     for (const [outputKey, ref] of Object.entries(map.metadata)) {
       const sourceLeaf = refSource(ref).split('.').at(-1)!
       for (const name of [outputKey, sourceLeaf]) {
-        if (keyNameIsSensitive(name) && refTransform(ref) !== 'hash') {
+        if (keyNameIsSensitive(name) && !refTransforms(ref).includes('hash')) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['metadata', outputKey],

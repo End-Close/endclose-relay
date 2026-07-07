@@ -13,7 +13,10 @@
 #
 # The `map` block of each route is the complete answer to "what leaves our network":
 # only fields named there are forwarded, ever. Paths are dot notation into the payload
-# (batchId, batch.id, transactions.*.id). Preview any route locally with:
+# (batchId, batch.id, transactions.*.id). Fields can be transformed, e.g.
+#   customer_email: { source: CustomerEmail, transform: [trim, lowercase, hash] }
+# (transforms apply in order; hash is a keyed HMAC so End Close can match values it
+# never sees raw). Preview any route locally with:
 #   relayctl map preview --route <id> --sample <payload.json>
 
 endclose:

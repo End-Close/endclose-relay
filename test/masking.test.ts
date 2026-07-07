@@ -45,6 +45,34 @@ describe('mapping as allowlist', () => {
     expect(record.metadata).toEqual({ batch_number: 'b-9', line_ids: ['l1', 'l2'] })
   })
 
+  it('transform arrays apply in order (normalize before hash)', () => {
+    const chained = route({
+      metadata: { customer_email: { source: 'email', transform: ['trim', 'lowercase', 'hash'] } },
+    })
+    const messy = mapEvent(chained, { id: 'e', amount: '1.00', email: '  A@B.com ' }, '2026-07-07T00:00:00Z', MASKING_KEY)
+    const clean = mapEvent(chained, { id: 'e', amount: '1.00', email: 'a@b.com' }, '2026-07-07T00:00:00Z', MASKING_KEY)
+    // normalization makes the hashes join across inconsistent source formatting
+    expect(messy.record.metadata['customer_email']).toBe(clean.record.metadata['customer_email'])
+    expect(messy.report.hashed).toContain('metadata.customer_email')
+
+    // without normalization the hashes differ — order matters
+    const hashOnly = route({
+      metadata: { customer_email: { source: 'email', transform: 'hash' } },
+    })
+    const rawHash = mapEvent(hashOnly, { id: 'e', amount: '1.00', email: '  A@B.com ' }, '2026-07-07T00:00:00Z', MASKING_KEY)
+    expect(rawHash.record.metadata['customer_email']).not.toBe(clean.record.metadata['customer_email'])
+  })
+
+  it('trim/lowercase apply elementwise over wildcard arrays', () => {
+    const { record } = mapEvent(
+      route({ metadata: { emails: { source: 'people.*.email', transform: ['trim', 'lowercase'] } } }),
+      { id: 'e', amount: '1.00', people: [{ email: ' X@Y.com ' }, { email: 'z@w.com' }] },
+      '2026-07-07T00:00:00Z',
+      MASKING_KEY,
+    )
+    expect(record.metadata['emails']).toEqual(['x@y.com', 'z@w.com'])
+  })
+
   it('hash transform is deterministic, keyed, and irreversible-looking', () => {
     const r = route({ metadata: { customer_email: { source: 'email', transform: 'hash' } } })
     const one = mapEvent(r, { id: 'e', amount: '1.00', email: 'a@b.com' }, '2026-07-07T00:00:00Z', MASKING_KEY)
