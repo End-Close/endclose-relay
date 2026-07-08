@@ -58,6 +58,15 @@ Retention: payloads of delivered/filtered events are wiped after 7 days and thei
 (the idempotency ledger) deleted after 30 (`retention:` in relay.yaml). Parked events are
 kept until replayed — never silently dropped.
 
+## Documentation
+
+- **[docs/SECURITY.md](docs/SECURITY.md)** — the security-review packet: what leaves
+  your network, what End Close can and cannot do, encryption, retention, audit,
+  supply chain. Start here if you're a security team.
+- **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — install → Payabli setup → masking
+  sign-off → go-live → operations runbooks.
+- **[docs/CONFIG.md](docs/CONFIG.md)** — the complete relay.yaml reference.
+
 ## Quick start
 
 ```sh

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main, relay-mvp]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable pnpm # version pinned by packageManager in package.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      # Shipped configs must stay parseable by the current schema — this is the
+      # config-compatibility promise from README "Configuration vs. updates",
+      # enforced mechanically.
+      - run: node dist/cli/relayctl.js config validate --config relay.example.yaml
+      - run: node dist/cli/relayctl.js config validate --config dev/relay.dev.yaml
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Build only — publishing/signing is the release pipeline, which lands later.
+      - run: docker build -t endclose-relay:ci .
