@@ -1,5 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import { statSync } from 'node:fs'
+import fastifyStatic from '@fastify/static'
+import { existsSync, statSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Db } from '../db/db.js'
 import { EventsRepo, type EventStatus } from '../db/repo/events.js'
 import { RoutesRepo } from '../db/repo/routes.js'
@@ -9,7 +12,6 @@ import { loadConfig } from '../config/load.js'
 import { applyConfig } from '../config/apply.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
-import { STATUS_PAGE_HTML } from './status-page.js'
 
 // The admin plane binds to loopback by default and carries no authentication: the
 // security boundary is host access. It is the ONLY place killswitches can be flipped —
@@ -31,7 +33,19 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
 
   const app = Fastify({ logger: false })
 
-  app.get('/', async (_req, reply) => reply.header('content-type', 'text/html').send(STATUS_PAGE_HTML))
+  // The React status UI (ui/ → dist/admin-ui via `pnpm build`). Explicit API routes
+  // below take precedence over the static wildcard. Read-only by design: mutations go
+  // through relayctl so they carry an actor.
+  const uiDir = join(dirname(fileURLToPath(import.meta.url)), '../..', 'dist/admin-ui')
+  if (existsSync(join(uiDir, 'index.html'))) {
+    app.register(fastifyStatic, { root: uiDir })
+  } else {
+    app.get('/', async (_req, reply) =>
+      reply
+        .header('content-type', 'text/html')
+        .send('<!doctype html><title>endclose-relay</title><body>endclose-relay admin — UI not built (run <code>pnpm build</code>); the JSON API is at <a href="/status">/status</a>.'),
+    )
+  }
 
   app.get('/status', async () => {
     const stats = new Map(events.perRouteStats().map((s) => [s.route_id, s]))

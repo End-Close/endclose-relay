@@ -28,6 +28,10 @@ procs:
     env:
       PAYABLI_WEBHOOK_SECRET: Bearer dev-webhook-secret
 
+  ui:
+    shell: pnpm dev:ui
+    autostart: false # vite dev server on :5173, proxies API calls to the relay on :8081
+
   test:
     shell: pnpm vitest
     autostart: false

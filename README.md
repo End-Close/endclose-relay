@@ -37,7 +37,9 @@ relayctl config plan | apply         # diff/apply an edited relay.yaml without r
 
 In Docker: `docker compose exec relay node dist/cli/relayctl.js status`.
 
-A read-only status page is served at `http://127.0.0.1:8081/`, and Prometheus metrics +
+A read-only status UI (React, built into the image — no CDN assets, so egress allowlists
+stay tight) is served at `http://127.0.0.1:8081/`: live status, an event browser, and the
+audit log. Prometheus metrics +
 `/healthz` `/readyz` probes at `:9090` (optional basic auth via `METRICS_BASIC_AUTH`):
 `relay_ingest_total`, `relay_forward_total`, `relay_queue_depth`,
 `relay_delivery_lag_seconds`, `relay_killswitch_state`, `relay_db_bytes`.
@@ -114,7 +116,9 @@ pnpm dev:all     # mprocs: relay (watch mode) + mock End Close API
 `pnpm dev:all` starts [mprocs](https://github.com/pvolok/mprocs) with the relay in watch
 mode (dev config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`) and a mock End Close
 API that prints every record the relay forwards. Select the `webhooks` process and press
-`s` to fire the Payabli fixture webhooks at the relay; `test` runs vitest in watch mode.
+`s` to fire the Payabli fixture webhooks at the relay; `test` runs vitest in watch mode;
+`ui` runs the status UI (`ui/`) on :5173 with Vite HMR, proxying API calls to the relay —
+the relay itself serves the built UI from `dist/admin-ui` after `pnpm build`.
 
 ## Egress
 
