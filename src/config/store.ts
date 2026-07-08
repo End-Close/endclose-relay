@@ -54,18 +54,18 @@ export function saveConfig(db: Db, yamlText: string, appliedBy: string): LoadedC
   return loaded
 }
 
-/** First boot: seed the store from a relay.yaml if the database has no config yet. */
-export function seedIfEmpty(db: Db, seedPath: string | undefined): LoadedConfig {
+/**
+ * First boot: seed the store from a relay.yaml if the database has no config yet.
+ * Returns undefined when there is no config and no seed file — a valid state now:
+ * the relay boots into bootstrap mode and the initial config is entered in the admin UI.
+ */
+export function seedIfEmpty(db: Db, seedPath: string | undefined): LoadedConfig | undefined {
   const active = getActiveConfig(db)
   if (active) return active
-  if (!seedPath || !existsSync(seedPath)) {
-    throw new Error(
-      `no configuration in the database and no seed file found` +
-        (seedPath ? ` at ${seedPath}` : ` (set RELAY_CONFIG)`) +
-        ` — first boot needs a relay.yaml to seed from`,
-    )
+  if (seedPath && existsSync(seedPath)) {
+    return saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed')
   }
-  return saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed')
+  return undefined
 }
 
 export function listConfigVersions(db: Db, limit = 50): ConfigVersion[] {

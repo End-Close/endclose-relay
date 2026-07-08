@@ -11,8 +11,14 @@ export interface EnvCheck {
   problem: string
 }
 
-export function checkRequiredEnv(env: NodeJS.ProcessEnv = process.env): EnvCheck[] {
+export function checkRequiredEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  secretsFileError?: string,
+): EnvCheck[] {
   const missing: EnvCheck[] = []
+  // A broken strict-mode secrets file is the likeliest cause of everything else being
+  // missing — name it first so the setup page explains the situation.
+  if (secretsFileError) missing.push({ name: 'RELAY_SECRETS_FILE', problem: secretsFileError })
   for (const name of ['RELAY_DATA_KEY', 'MASKING_HMAC_KEY'] as const) {
     if (!env[name]) missing.push({ name, problem: 'not set' })
     else if (env[name].length < 16) missing.push({ name, problem: 'too short (min 16 chars)' })
@@ -30,6 +36,10 @@ export function buildSetupServer(missing: EnvCheck[]): FastifyInstance {
   app.get('/', async (_req, reply) =>
     reply.header('content-type', 'text/html').send(setupPage(missing)),
   )
+  // Liveness must succeed in setup mode: Distr's autoheal sidecar restarts unhealthy
+  // containers, and a failing healthcheck here would restart-loop the relay while the
+  // operator is reading this very page.
+  app.get('/healthz', async () => ({ ok: true, mode: 'env-setup' }))
   // Anything else (probes, the UI's API calls) gets an unambiguous "not configured".
   app.setNotFoundHandler(async (_req, reply) =>
     reply.code(503).send({ error: 'relay is not configured', missing: missing.map((m) => m.name) }),

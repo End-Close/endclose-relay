@@ -229,6 +229,28 @@ export default function App() {
   const [tab, setTab] = useState<(typeof TABS)[number]>('status')
   const { data: status, error, refresh } = usePolled(fetchStatus, [])
 
+  if (status?.mode === 'bootstrap') {
+    return (
+      <>
+        <h1>
+          endclose-relay <small>v{status.version} — setup</small>
+        </h1>
+        <p className="env-warning">
+          The relay is not configured yet. Paste your initial configuration below, use
+          validate + map preview with a sample payload, then apply — the relay restarts
+          itself into running mode. <strong>No webhooks are accepted until then.</strong>
+        </p>
+        {status.secret_envs.some((s) => !s.set) && (
+          <p className="text-dim">
+            note: unset secrets ({status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')})
+            can be provided before or after configuration.
+          </p>
+        )}
+        <ConfigTab />
+      </>
+    )
+  }
+
   return (
     <>
       <h1>

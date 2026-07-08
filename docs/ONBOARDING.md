@@ -32,26 +32,57 @@ whole sandbox phase to take about an hour of hands-on time.
 
 ## 1. Install (sandbox)
 
+### Option A — Distr-managed (recommended)
+
+End Close distributes and updates the relay through [Distr](https://distr.sh): a small
+open-source agent on your host polls outbound-only and applies versions you approve.
+You'll receive an invite to your Distr Customer Portal from End Close.
+
+1. **Create the data volume** (once — it's `external`, so undeploying the relay never
+   deletes it):
+   ```sh
+   docker volume create endclose-relay-data
+   ```
+2. **Provide the five secrets** — either enter them as Secrets in your Distr Customer
+   Portal (write-only after creation; never visible to End Close), or strict mode:
+   ```sh
+   install -m 600 relay.env /etc/endclose-relay/relay.env   # the five variables
+   # then set RELAY_SECRETS_FILE=/host-config/relay.env in the deployment env
+   ```
+   The trade-offs are laid out in `docs/SECURITY.md` (Secrets + Fleet management).
+3. **Install the agent** with the one-liner from your portal (per deployment target):
+   ```sh
+   curl "https://app.distr.sh/api/v1/connect?targetId=...&targetSecret=..." | docker compose -f - up -d
+   ```
+4. **Deploy the relay** from the portal — pick the version End Close published and
+   fill the env values (only `RELAY_SECRETS_FILE` if you use strict mode).
+5. **Configure it**: the relay boots into **bootstrap mode** (no webhooks accepted
+   yet). Open the admin UI — `ssh -L 8081:127.0.0.1:8081 <host>` then
+   `http://127.0.0.1:8081` (basic auth from `ADMIN_BASIC_AUTH`) — paste your initial
+   configuration, validate, preview, apply. The relay restarts itself into running
+   mode.
+
+### Option B — manual compose
+
 ```sh
 mkdir -p /opt/endclose-relay /etc/endclose-relay
 cd /opt/endclose-relay
-# copy docker-compose.yaml here, the seed relay.yaml to /etc/endclose-relay/,
+# copy docker-compose.yaml here, optionally a seed relay.yaml to /etc/endclose-relay/,
 # and wire the five environment variables into the relay service (secret manager,
 # env_file, ... — however you manage secrets)
 docker compose up -d
 ```
 
+With a seed file the relay comes up configured; without one it boots into bootstrap
+mode exactly as above. Start any seed from `relay.example.yaml`; the reference for
+every field is `docs/CONFIG.md`.
+
+### Either way
+
 If any required variable is missing or invalid, the relay serves a **setup page** on
 `:8081` naming exactly what's wrong (and does nothing else) — fix the environment and
-recreate the container.
-
-Start the seed from `relay.example.yaml`; the reference for every field is
-`docs/CONFIG.md`. For sandbox, set the Payabli IP allowlist to the sandbox egress IP
-(`52.3.204.115`). The seed is read once, on first boot — from then on, configuration is
-managed in the admin UI.
-
-Open the **admin UI** at `http://127.0.0.1:8081` on the host (basic auth from
-`ADMIN_BASIC_AUTH`; from your workstation: `ssh -L 8081:127.0.0.1:8081 <host>`).
+recreate the container. For sandbox, set the Payabli IP allowlist to the sandbox egress
+IP (`52.3.204.115`).
 
 **Checkpoint:** the status tab shows both routes, killswitch "forwarding", 0 events —
 and the End Close dashboard shows the relay's data streams (empty).
@@ -146,9 +177,17 @@ payloads).
   audit, Payabli's `/Query/transactions` can be compared against the End Close data
   stream for the outage window.
 
-**Upgrades:** version updates never touch your config (see README "Configuration vs.
-updates"). A managed update flow ships together with fleet distribution; until then,
-End Close will coordinate updates with you directly.
+**Upgrades (Distr-managed):** End Close publishes a new version; it appears in your
+Distr portal (deployments show as "outdated") with release notes. You approve; the
+agent applies it — a pull + recreate against the same data volume, so configuration,
+buffered events, and audit history are untouched (verify anytime: config hash in the
+admin UI header is unchanged after an upgrade). **Rollback**: redeploy the previous
+version from the portal — config versions are forward-compatible within a major
+version, so the older relay reads the same config. **Undeploy** stops and removes the
+relay's containers but preserves the `endclose-relay-data` volume; a redeploy picks up
+exactly where it left off. Deleting data is a separate, explicit
+`docker volume rm endclose-relay-data`. Manual-compose installs upgrade with
+`docker compose pull && docker compose up -d`.
 
 ## Support
 

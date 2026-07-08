@@ -13,6 +13,7 @@ export interface RouteStatus {
 
 export interface Status {
   version: string
+  mode: 'bootstrap' | 'running'
   uptime_s: number
   secret_envs: { name: string; set: boolean }[]
   config_hash: string | null
@@ -111,7 +112,7 @@ export const replayAllParked = () => post<{ replayed: number }>('/events/replay-
 export const fetchConfig = () => get<ConfigInfo>('/config')
 export const validateConfig = (yaml: string) => post<ValidationResult>('/config/validate', { yaml })
 export const saveConfig = (yaml: string) =>
-  post<{ applied: string; restart_pending: boolean }>('/config', { yaml })
+  post<{ applied: string; restart_pending: boolean; restarting?: boolean }>('/config', { yaml })
 export const previewConfig = (yaml: string, route: string, sample: unknown) =>
   post<PreviewResult>('/config/preview', { yaml, route, sample })
 export const fetchConfigVersions = () => get<ConfigVersion[]>('/config/versions')

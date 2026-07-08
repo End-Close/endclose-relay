@@ -26,6 +26,15 @@ describe('boot env checks', () => {
       }),
     ).toEqual([])
   })
+
+  it('surfaces a broken secrets file first — it explains everything else', () => {
+    const checks = checkRequiredEnv({}, 'RELAY_SECRETS_FILE is set but unreadable: /host-config/relay.env')
+    expect(checks[0]).toEqual({
+      name: 'RELAY_SECRETS_FILE',
+      problem: 'RELAY_SECRETS_FILE is set but unreadable: /host-config/relay.env',
+    })
+    expect(checks.length).toBe(4)
+  })
 })
 
 describe('setup server', () => {
@@ -58,5 +67,11 @@ describe('setup server', () => {
     const res = await server.inject({ method: 'GET', url: '/status' })
     expect(res.statusCode).toBe(503)
     expect(res.json().missing).toEqual(['MASKING_HMAC_KEY', 'ADMIN_BASIC_AUTH'])
+  })
+
+  it('healthz answers 200 so autoheal never restart-loops setup mode', async () => {
+    const res = await server.inject({ method: 'GET', url: '/healthz' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true, mode: 'env-setup' })
   })
 })

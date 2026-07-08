@@ -35,6 +35,10 @@ export interface AdminDeps {
   basicAuth: string
   maskingKey: Buffer
   bootConfigHash: string
+  /** 'bootstrap' = no config yet: UI shows the setup editor; ingest is not running. */
+  mode?: 'bootstrap' | 'running'
+  /** Called once after the first successful config apply in bootstrap mode. */
+  onBootstrapApplied?: () => void
 }
 
 export function buildAdminServer(deps: AdminDeps): FastifyInstance {
@@ -44,9 +48,13 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   const audit = new AuditRepo(deps.db)
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
+  const mode = deps.mode ?? 'running'
 
   const expectedAuth = 'Basic ' + Buffer.from(deps.basicAuth, 'utf8').toString('base64')
   app.addHook('onRequest', async (request, reply) => {
+    // Liveness stays unauthenticated: it drives the container healthcheck (and Distr's
+    // autoheal) in every mode and reveals only { ok, mode }.
+    if (request.url === '/healthz') return
     const presented = Buffer.from(request.headers.authorization ?? '', 'utf8')
     const expected = Buffer.from(expectedAuth, 'utf8')
     if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) {
@@ -81,6 +89,8 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     )
   }
 
+  app.get('/healthz', async () => ({ ok: true, mode }))
+
   app.get('/status', async () => {
     const stats = new Map(events.perRouteStats().map((s) => [s.route_id, s]))
     const now = Date.now()
@@ -90,6 +100,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     const activeConfig = getActiveConfig(deps.db)?.config
     return {
       version: VERSION,
+      mode,
       uptime_s: Math.round((now - deps.startedAt) / 1000),
       // Boot check surfaced to the UI: secrets referenced by the active config (plus the
       // appliance keys) and whether each is currently set in the environment.
@@ -207,6 +218,12 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       loaded = saveConfig(deps.db, yaml, ACTOR)
     } catch (err) {
       return reply.code(422).send({ error: (err as Error).message })
+    }
+    if (mode === 'bootstrap') {
+      // First config: the process restarts itself (compose restart policy brings it
+      // back through the normal boot path) rather than half-starting services here.
+      deps.onBootstrapApplied?.()
+      return { applied: loaded.hash, restart_pending: false, restarting: true }
     }
     return {
       applied: loaded.hash,

@@ -202,8 +202,85 @@ describe('config store seeding', () => {
     const { seedIfEmpty } = await import('../src/config/store.js')
     // DB already has config: seed is a no-op returning the active config
     const active = seedIfEmpty(db, '/nonexistent/relay.yaml')
-    expect(active.config.routes).toHaveLength(2)
+    expect(active?.config.routes).toHaveLength(2)
     db.close()
+  })
+
+  it('returns undefined (bootstrap mode) when empty with no seed file', async () => {
+    const { openDb } = await import('../src/db/db.js')
+    const { migrate } = await import('../src/db/migrate.js')
+    const { seedIfEmpty } = await import('../src/config/store.js')
+    const db = openDb(':memory:')
+    migrate(db)
+    expect(seedIfEmpty(db, '/nonexistent/relay.yaml')).toBeUndefined()
+    expect(seedIfEmpty(db, undefined)).toBeUndefined()
+    db.close()
+  })
+})
+
+describe('bootstrap mode', () => {
+  it('serves the UI/status with mode=bootstrap, applies first config, fires callback once', async () => {
+    const { openDb } = await import('../src/db/db.js')
+    const { migrate } = await import('../src/db/migrate.js')
+    const db = openDb(':memory:')
+    migrate(db)
+    let applied = 0
+    const admin = buildAdminServer({
+      db,
+      dbPath: ':memory:',
+      startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      bootConfigHash: '',
+      mode: 'bootstrap',
+      onBootstrapApplied: () => applied++,
+    })
+    await admin.ready()
+
+    // healthz is unauthenticated and reports the mode
+    const health = await admin.inject({ method: 'GET', url: '/healthz' })
+    expect(health.statusCode).toBe(200)
+    expect(health.json()).toEqual({ ok: true, mode: 'bootstrap' })
+
+    const status = (await admin.inject({ method: 'GET', url: '/status', headers: AUTH })).json()
+    expect(status.mode).toBe('bootstrap')
+    expect(status.config_hash).toBeNull()
+    expect(status.routes).toEqual([])
+
+    // no config yet
+    expect((await admin.inject({ method: 'GET', url: '/config', headers: AUTH })).statusCode).toBe(404)
+
+    // first apply responds restarting:true and fires the callback exactly once
+    const yaml = TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999')
+    const res = await admin.inject({ method: 'POST', url: '/config', payload: { yaml }, headers: AUTH })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().restarting).toBe(true)
+    expect(applied).toBe(1)
+
+    await admin.close()
+    db.close()
+  })
+
+  it('running mode reports mode and healthz without auth', async () => {
+    const setup = setupDb()
+    const admin = buildAdminServer({
+      db: setup.db,
+      dbPath: ':memory:',
+      startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      bootConfigHash: getActiveConfig(setup.db)!.hash,
+    })
+    await admin.ready()
+    expect((await admin.inject({ method: 'GET', url: '/healthz' })).json()).toEqual({
+      ok: true,
+      mode: 'running',
+    })
+    expect((await admin.inject({ method: 'GET', url: '/status', headers: AUTH })).json().mode).toBe(
+      'running',
+    )
+    await admin.close()
+    setup.db.close()
   })
 })
 

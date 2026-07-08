@@ -63,6 +63,21 @@ kept until replayed — never silently dropped.
   sign-off → go-live → operations runbooks.
 - **[docs/CONFIG.md](docs/CONFIG.md)** — the complete configuration reference.
 
+## Deployment
+
+Customer installs are **Distr-managed** by default: an open-source agent
+([distr.sh](https://distr.sh)) on the customer host polls outbound-only, pulls the
+relay image from End Close's registry, and applies versions the customer approves in
+their portal. `distr/docker-compose.yaml` is the compose file delivered through that
+channel (external data volume — undeploy never deletes data; secrets via the
+customer's Distr Secrets or a host file in strict mode). A fresh appliance boots into
+**bootstrap mode**: the admin UI serves a setup editor for the initial configuration
+and the relay restarts itself into running mode after the first apply. Releases are
+published by tagging `vX.Y.Z` (`.github/workflows/release.yml`). Full flow:
+[docs/ONBOARDING.md](docs/ONBOARDING.md).
+
+The root `docker-compose.yaml` below is the manual/dev variant of the same appliance.
+
 ## Quick start
 
 ```sh
