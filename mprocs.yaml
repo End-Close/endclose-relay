@@ -1,0 +1,39 @@
+# Local development: `pnpm dev:all` (or `pnpm exec mprocs`).
+#
+#   relay          the relay itself, restarting on source changes
+#   mock-endclose  fake End Close API printing every record the relay forwards
+#   webhooks       fire the Payabli fixtures at the relay (press `s` on it to run)
+#   test           vitest watch (start manually when wanted)
+#
+# Dev-only secrets are hardcoded here on purpose — they gate nothing real.
+procs:
+  relay:
+    shell: tsx watch src/index.ts
+    env:
+      RELAY_CONFIG: dev/relay.dev.yaml # first-boot seed; config then lives in data/dev.db
+      RELAY_DB_PATH: ./data/dev.db
+      ENDCLOSE_API_KEY: dev-api-key
+      PAYABLI_WEBHOOK_SECRET: Bearer dev-webhook-secret
+      RELAY_DATA_KEY: dev-data-key-not-a-real-secret
+      MASKING_HMAC_KEY: dev-masking-key-not-a-real-secret
+      ADMIN_BASIC_AUTH: dev:dev
+      LOG_LEVEL: debug
+
+  mock-endclose:
+    shell: tsx scripts/mock-endclose.ts
+    env:
+      MOCK_EC_PORT: "4100"
+
+  webhooks:
+    shell: ./scripts/send-webhooks.sh
+    autostart: false
+    env:
+      PAYABLI_WEBHOOK_SECRET: Bearer dev-webhook-secret
+
+  ui:
+    shell: pnpm dev:ui
+    autostart: false # vite dev server on :5173, proxies API calls to the relay on :8081
+
+  test:
+    shell: pnpm vitest
+    autostart: false

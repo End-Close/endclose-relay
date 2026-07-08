@@ -1,0 +1,51 @@
+# endclose-relay — self-hosted webhook relay appliance.
+#
+# 1. Put a seed config at /etc/endclose-relay/relay.yaml (start from relay.example.yaml).
+#    It is read ONCE, on first boot, to seed the appliance; after that the config lives
+#    in the appliance database (on the relay-data volume) and is managed in the admin UI.
+# 2. Provide the required environment variables to the relay service however you
+#    manage secrets (secret-manager env injection, an optional .env next to this file,
+#    …): ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY, MASKING_HMAC_KEY,
+#    and ADMIN_BASIC_AUTH=user:password (protects the admin UI).
+# 3. docker compose up -d
+# 4. Admin UI: http://127.0.0.1:8081 on this host (SSH tunnel to reach it remotely, or
+#    front it with your internal TLS proxy to expose it wider — your call).
+#
+# Version updates replace the image and nothing else: config and buffered events live on
+# the relay-data volume, which redeploys never touch.
+#
+# Egress required: api.endclose.com:443 (plus your image registry for pulls). Nothing else.
+services:
+  relay:
+    image: ghcr.io/endclose/relay:0.1.0
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8443:8443" # webhook ingest — front with your own TLS terminator / LB
+      - "127.0.0.1:8081:8081" # admin UI/API (basic auth) — host-local by default
+      # Optional: expose Prometheus metrics + health probes to your monitoring network.
+      # - "9090:9090"
+    env_file:
+      - path: .env
+        required: false # one way to provide the env vars; injection via your secret manager works too
+    environment:
+      RELAY_CONFIG: /etc/endclose-relay/relay.yaml # first-boot seed only
+    volumes:
+      - ${RELAY_CONFIG_DIR:-/etc/endclose-relay}/relay.yaml:/etc/endclose-relay/relay.yaml:ro
+      - relay-data:/var/lib/endclose-relay
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8443/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  # Holds the config AND the encrypted store-and-forward buffer. Note: a fleet-manager
+  # "undeploy" (e.g. `docker compose down -v`) REMOVES this volume — undeploying is a
+  # killswitch, not an update path. Updates are `docker compose pull && up -d`.
+  relay-data:

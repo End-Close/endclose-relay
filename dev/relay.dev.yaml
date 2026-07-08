@@ -1,0 +1,53 @@
+# Local development seed config (used by mprocs; db path via RELAY_DB_PATH env). Read
+# only when ./data/dev.db is empty — `rm -rf data/` to reseed after editing this file,
+# or edit config in the admin UI like a customer would. No IP allowlists so you can
+# curl from localhost.
+endclose:
+  base_url: http://127.0.0.1:4100/v1
+  api_key_env: ENDCLOSE_API_KEY
+
+ingest:
+  port: 8443
+  host: 127.0.0.1
+
+admin:
+  host: 127.0.0.1
+
+routes:
+  - id: payabli-settlements
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+    events: ["TransferFunded"]
+    map:
+      data_stream_key: payabli_settlements_funded
+      external_id: transferId
+      amount: NetAmount
+      direction: credit
+      date: { source: transferTime, format: mdy_hms }
+      metadata:
+        batch_id: batchId
+        batch_number: batchNumber
+        total_amount: TotalAmount
+        return_amount: RtAmount
+        entry_point: entryPoint
+        paypoint: Paypoint
+
+  - id: payabli-batches
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+    events: ["PayOutBatchPaid"]
+    map:
+      data_stream_key: payabli_batches_paid
+      external_id: BatchId
+      amount: TotalAmount
+      direction: debit
+      metadata:
+        method: Method
+        entry_point: entryPoint
+        paypoint: Paypoint

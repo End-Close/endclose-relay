@@ -1,0 +1,78 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ok: #2e7d32;
+  --color-warn: #e65100;
+  --color-bad: #c62828;
+  /* currentColor-relative shades so light/dark both work via color-scheme */
+  --color-line: color-mix(in srgb, currentColor 15%, transparent);
+  --color-faint: color-mix(in srgb, currentColor 5%, transparent);
+  --color-dim: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    @apply mx-auto my-8 max-w-5xl px-4 font-mono text-sm;
+  }
+  h1 {
+    @apply text-lg font-bold;
+  }
+  h1 small {
+    @apply font-normal text-dim;
+  }
+  h2 {
+    @apply mt-6 mb-1 text-base font-bold;
+  }
+  table {
+    @apply my-4 w-full border-collapse;
+  }
+  th,
+  td {
+    @apply border-b border-line px-2.5 py-1.5 text-left align-top;
+  }
+  th {
+    @apply font-normal text-dim;
+  }
+  button {
+    @apply cursor-pointer rounded border border-line px-2.5 py-0.5;
+  }
+  button:hover:not(:disabled) {
+    @apply border-current;
+  }
+  button:disabled {
+    @apply cursor-default opacity-40;
+  }
+  select {
+    @apply rounded border border-line bg-transparent px-1.5 py-0.5;
+  }
+  textarea {
+    @apply w-full font-mono text-xs leading-5;
+  }
+}
+
+@layer components {
+  .pill {
+    @apply inline-block rounded-full border border-current px-2 py-px;
+  }
+  .panel {
+    @apply w-full rounded border border-line bg-faint p-2.5 text-xs leading-5;
+  }
+  .tabs {
+    @apply mb-4 flex gap-2 border-b border-line;
+  }
+  .tabs button {
+    @apply -mb-px rounded-none border-0 border-b-2 border-transparent px-3 py-1.5 opacity-60;
+  }
+  .tabs button:hover {
+    @apply opacity-100;
+  }
+  .tabs button.active {
+    @apply border-current opacity-100;
+  }
+  .env-warning {
+    @apply my-2 rounded border border-warn px-3 py-2 text-warn;
+  }
+}
