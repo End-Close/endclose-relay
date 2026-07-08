@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { openDb, type Db } from '../src/db/db.js'
 import { migrate } from '../src/db/migrate.js'
 import { parseConfig } from '../src/config/load.js'
-import { applyConfig } from '../src/config/apply.js'
+import { saveConfig } from '../src/config/store.js'
 import { deriveKey } from '../src/crypto/keys.js'
 import { Metrics } from '../src/metrics/metrics.js'
 import { EventsRepo } from '../src/db/repo/events.js'
@@ -19,8 +19,6 @@ export const TEST_CONFIG_YAML = `
 endclose:
   base_url: http://127.0.0.1:__EC_PORT__/v1
   api_key_env: ENDCLOSE_API_KEY
-storage:
-  db_path: ":memory:"
 dispatch:
   poll_interval_ms: 50
   backoff_base_ms: 20
@@ -69,8 +67,7 @@ export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics:
   process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer test-webhook-secret'
   const db = openDb(':memory:')
   migrate(db)
-  const loaded = parseConfig(TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort)))
-  applyConfig(db, loaded, 'test')
+  saveConfig(db, TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort)), 'test')
   const events = new EventsRepo(db)
   const kv = new KvRepo(db)
   const metrics = new Metrics({

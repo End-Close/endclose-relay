@@ -3,18 +3,24 @@ import {
   fetchAudit,
   fetchEvents,
   fetchStatus,
+  replayAllParked,
+  replayEvent,
+  setKillswitch,
+  setRoutePaused,
   type AuditRow,
   type EventSummary,
   type Status,
 } from './api.js'
+import ConfigTab from './ConfigTab.js'
 import { fmtAgo, fmtBytes, fmtDuration, fmtTime } from './format.js'
 
 const REFRESH_MS = 5000
 
 /** Poll a fetcher while its consumer is mounted; null until the first response. */
-function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null } {
+function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; refresh: () => void } {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [nonce, setNonce] = useState(0)
   useEffect(() => {
     let live = true
     const tick = () =>
@@ -29,23 +35,60 @@ function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[]): { data: T | n
       clearInterval(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return { data, error }
+  }, [...deps, nonce])
+  return { data, error, refresh: () => setNonce((n) => n + 1) }
 }
 
-function KillswitchPill({ status }: { status: Status }) {
+function KillswitchControls({ status, refresh }: { status: Status; refresh: () => void }) {
   const ks = status.killswitch.global
-  if (ks === 'none') return <span className="pill ok">forwarding</span>
-  return <span className={`pill ${ks === 'panic' ? 'bad' : 'warn'}`}>killswitch: {ks}</span>
+  const flip = async (state: 'none' | 'pause' | 'panic', warning?: string) => {
+    if (warning && !confirm(warning)) return
+    await setKillswitch(state)
+    refresh()
+  }
+  return (
+    <span className="ks-controls">
+      {ks === 'none' ? (
+        <span className="pill ok">forwarding</span>
+      ) : (
+        <span className={`pill ${ks === 'panic' ? 'bad' : 'warn'}`}>killswitch: {ks}</span>
+      )}{' '}
+      {ks === 'none' && (
+        <>
+          <button onClick={() => flip('pause', 'Pause forwarding? Webhooks keep buffering locally; nothing is lost.')}>
+            pause
+          </button>
+          <button
+            className="danger"
+            onClick={() =>
+              flip(
+                'panic',
+                'PANIC: refuse all incoming webhooks (503) and stop forwarding?\n\nThe processor only retries for a limited window — an extended panic can require manual replay from the processor. Continue?',
+              )
+            }
+          >
+            panic
+          </button>
+        </>
+      )}
+      {ks !== 'none' && <button onClick={() => flip('none')}>resume</button>}
+    </span>
+  )
 }
 
-function RoutesTable({ status }: { status: Status }) {
+function RoutesTable({ status, refresh }: { status: Status; refresh: () => void }) {
+  const togglePause = async (id: string, paused: boolean) => {
+    if (!paused || confirm(`Pause route ${id}? Its events keep buffering; nothing is forwarded.`)) {
+      await setRoutePaused(id, paused)
+      refresh()
+    }
+  }
   return (
     <table>
       <thead>
         <tr>
           <th>route</th><th>stream</th><th>state</th><th>pending</th><th>retry</th>
-          <th>parked</th><th>delivered</th><th>oldest pending</th><th>last delivered</th>
+          <th>parked</th><th>delivered</th><th>oldest pending</th><th>last delivered</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -60,6 +103,11 @@ function RoutesTable({ status }: { status: Status }) {
             <td>{r.counts.delivered ?? 0}</td>
             <td>{r.oldest_pending_age_s == null ? '—' : fmtDuration(r.oldest_pending_age_s)}</td>
             <td title={fmtTime(r.last_delivered_at)}>{fmtAgo(r.last_delivered_at)}</td>
+            <td>
+              <button onClick={() => togglePause(r.id, !r.paused)}>
+                {r.paused ? 'resume' : 'pause'}
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -72,10 +120,21 @@ const EVENT_STATUSES = ['', 'pending', 'retry', 'delivering', 'delivered', 'park
 function EventsTab({ routes }: { routes: string[] }) {
   const [status, setStatus] = useState('')
   const [route, setRoute] = useState('')
-  const { data, error } = usePolled(
+  const { data, error, refresh } = usePolled(
     () => fetchEvents({ ...(status && { status }), ...(route && { route }) }),
     [status, route],
   )
+  const parkedCount = (data ?? []).filter((e) => e.status === 'parked').length
+  const replayOne = async (id: number) => {
+    await replayEvent(id)
+    refresh()
+  }
+  const replayParked = async () => {
+    if (!confirm('Re-queue all parked events for delivery?')) return
+    const res = await replayAllParked()
+    alert(`replayed ${res.replayed} event(s)`)
+    refresh()
+  }
   return (
     <>
       <div className="filters">
@@ -96,13 +155,16 @@ function EventsTab({ routes }: { routes: string[] }) {
             ))}
           </select>
         </label>
+        {parkedCount > 0 && (
+          <button onClick={replayParked}>replay all parked</button>
+        )}
         {error && <span className="bad">{error}</span>}
       </div>
       <table>
         <thead>
           <tr>
             <th>#</th><th>status</th><th>route</th><th>event</th><th>received</th>
-            <th>attempts</th><th>last error</th>
+            <th>attempts</th><th>last error</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -115,23 +177,32 @@ function EventsTab({ routes }: { routes: string[] }) {
               <td title={fmtTime(e.received_at)}>{fmtAgo(e.received_at)}</td>
               <td>{e.attempts}</td>
               <td className="error-cell muted">{e.last_error ?? ''}</td>
+              <td>{e.status === 'parked' && <button onClick={() => replayOne(e.id)}>replay</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
       {data?.length === 0 && <div className="empty">no events match</div>}
-      {data && data.some((e) => e.status === 'parked') && (
-        <p className="muted">replay parked events with: relayctl events replay --parked</p>
-      )}
     </>
   )
 }
 
 function AuditTab() {
   const { data, error } = usePolled(() => fetchAudit(), [])
+  const download = () => {
+    const jsonl = (data ?? []).map((r) => JSON.stringify(r)).join('\n')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([jsonl], { type: 'application/jsonl' }))
+    a.download = 'relay-audit.jsonl'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
   return (
     <>
-      {error && <p className="bad">{error}</p>}
+      <div className="filters">
+        <button onClick={download}>download jsonl</button>
+        {error && <span className="bad">{error}</span>}
+      </div>
       <table>
         <thead>
           <tr><th>at</th><th>actor</th><th>action</th><th>detail</th></tr>
@@ -152,11 +223,11 @@ function AuditTab() {
   )
 }
 
-const TABS = ['status', 'events', 'audit'] as const
+const TABS = ['status', 'events', 'config', 'audit'] as const
 
 export default function App() {
   const [tab, setTab] = useState<(typeof TABS)[number]>('status')
-  const { data: status, error } = usePolled(fetchStatus, [])
+  const { data: status, error, refresh } = usePolled(fetchStatus, [])
 
   return (
     <>
@@ -170,8 +241,13 @@ export default function App() {
             uptime {fmtDuration(status.uptime_s)} · db {fmtBytes(status.storage.db_bytes)} · config{' '}
             <code className="hash" title={status.config_hash ?? ''}>
               {(status.config_hash ?? '?').slice(0, 19)}
-            </code>{' '}
-            · <KillswitchPill status={status} />
+            </code>
+            {status.restart_pending && (
+              <span className="warn" title="Config changed since boot; non-route changes apply on restart">
+                {' '}· restart pending
+              </span>
+            )}{' '}
+            · <KillswitchControls status={status} refresh={refresh} />
           </>
         )}
       </p>
@@ -182,8 +258,9 @@ export default function App() {
           </button>
         ))}
       </nav>
-      {tab === 'status' && status && <RoutesTable status={status} />}
+      {tab === 'status' && status && <RoutesTable status={status} refresh={refresh} />}
       {tab === 'events' && <EventsTab routes={status?.routes.map((r) => r.id) ?? []} />}
+      {tab === 'config' && <ConfigTab />}
       {tab === 'audit' && <AuditTab />}
     </>
   )

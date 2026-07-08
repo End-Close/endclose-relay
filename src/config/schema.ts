@@ -128,13 +128,13 @@ export const relayConfigSchema = z.object({
       host: z.string().default('0.0.0.0'),
     })
     .default({}),
-  // Local admin plane (relayctl + status page). Binds to loopback by default: reachable
-  // via `docker compose exec`, never published. There is deliberately no auth story here —
-  // the boundary is host access.
+  // Admin plane: management UI + API. Protected by mandatory basic auth
+  // (ADMIN_BASIC_AUTH). The shipped compose file publishes it to the HOST's loopback
+  // only; exposing it wider (behind your own TLS) is a deliberate customer action.
   admin: z
     .object({
       port: z.number().int().default(8081),
-      host: z.string().default('127.0.0.1'),
+      host: z.string().default('0.0.0.0'),
     })
     .default({}),
   // Prometheus + healthz/readyz for the customer's own monitoring. Not published by the
@@ -151,11 +151,6 @@ export const relayConfigSchema = z.object({
       delivered_days: z.number().int().positive().default(7),
       // Delivered/filtered rows (the idempotency ledger) are deleted after this many days.
       ledger_days: z.number().int().positive().default(30),
-    })
-    .default({}),
-  storage: z
-    .object({
-      db_path: z.string().default('/var/lib/endclose-relay/relay.db'),
     })
     .default({}),
   dispatch: z

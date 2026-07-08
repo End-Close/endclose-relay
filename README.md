@@ -21,41 +21,31 @@ You hold the killswitches: `pause` (buffer locally, forward nothing) and `panic`
 ingest entirely). Neither can be flipped remotely — End Close's visibility into the relay is
 read-only and metadata-only.
 
-## Operations
+## The admin UI
 
-Everything operational goes through `relayctl` (backed by a loopback-only admin API on
-`:8081` — the security boundary is host access; End Close cannot reach it):
+Everything is managed in a web UI served by the appliance itself at `:8081` (React, built
+into the image — no CDN assets, so egress allowlists stay tight), protected by **mandatory
+basic auth** (`ADMIN_BASIC_AUTH`). The shipped compose file publishes it to the Docker
+host's loopback only; reach it over an SSH tunnel, or deliberately expose it behind your
+own internal TLS proxy.
 
-```sh
-relayctl status                      # queues, killswitch, per-route delivery state
-relayctl pause | resume | panic      # global killswitch (per-route: --route <id>)
-relayctl events ls --status parked   # inspect events (payloads never shown)
-relayctl events replay --parked      # re-queue parked events
-relayctl audit export                # append-only audit log as JSONL
-relayctl config plan | apply         # diff/apply an edited relay.yaml without restart
-```
+- **status** — queues, killswitch state and controls (pause/resume/panic with
+  confirmations), per-route pause toggles.
+- **events** — browse buffered/delivered/parked events (payloads are never shown);
+  replay parked events individually or in bulk.
+- **config** — the declarative YAML config, edited in place: validate against the
+  schema, **preview exactly what would leave your network** for a sample payload
+  (including every field that is *not* forwarded), apply, and browse/restore the full
+  version history. Download the active config as YAML at any time.
+- **audit** — the append-only audit log (killswitch flips, config applies, replays),
+  downloadable as JSONL.
 
-On the Docker host, install the bundled wrapper once and `relayctl` works natively from
-any SSH session (it finds the relay container by label and attributes audit entries to
-your username):
-
-```sh
-docker compose exec relay cat /app/bin/relayctl | sudo tee /usr/local/bin/relayctl > /dev/null
-sudo chmod +x /usr/local/bin/relayctl
-relayctl status
-```
-
-(Equivalent raw form: `docker compose exec relay node dist/cli/relayctl.js status`.)
-
-A read-only status UI (React, built into the image — no CDN assets, so egress allowlists
-stay tight) is served at `http://127.0.0.1:8081/`: live status, an event browser, and the
-audit log. Prometheus metrics +
-`/healthz` `/readyz` probes at `:9090` (optional basic auth via `METRICS_BASIC_AUTH`):
-`relay_ingest_total`, `relay_forward_total`, `relay_queue_depth`,
+Prometheus metrics + `/healthz` `/readyz` probes are at `:9090` (optional basic auth via
+`METRICS_BASIC_AUTH`): `relay_ingest_total`, `relay_forward_total`, `relay_queue_depth`,
 `relay_delivery_lag_seconds`, `relay_killswitch_state`, `relay_db_bytes`.
 
 Retention: payloads of delivered/filtered events are wiped after 7 days and their rows
-(the idempotency ledger) deleted after 30 (`retention:` in relay.yaml). Parked events are
+(the idempotency ledger) deleted after 30 (`retention:` in the config). Parked events are
 kept until replayed — never silently dropped.
 
 ## Documentation
@@ -65,63 +55,47 @@ kept until replayed — never silently dropped.
   supply chain. Start here if you're a security team.
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — install → Payabli setup → masking
   sign-off → go-live → operations runbooks.
-- **[docs/CONFIG.md](docs/CONFIG.md)** — the complete relay.yaml reference.
+- **[docs/CONFIG.md](docs/CONFIG.md)** — the complete configuration reference.
 
 ## Quick start
 
 ```sh
-cp relay.example.yaml relay.yaml   # review masking/routes with End Close
+mkdir -p /etc/endclose-relay
+cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed
 cat > .env <<'EOF'
 ENDCLOSE_API_KEY=...
 PAYABLI_WEBHOOK_SECRET=Bearer <random-token-you-also-set-in-payabli>
 RELAY_DATA_KEY=<32+ random chars>
 MASKING_HMAC_KEY=<32+ random chars>
+ADMIN_BASIC_AUTH=admin:<strong password>
 EOF
 docker compose up -d
 ```
 
-Then configure the Payabli notifications (`payout_batch_settlement_funded`,
-`payout_batch_paid`) to POST to `https://<your-host>/ingest/payabli-settlements` and
-`.../ingest/payabli-batches` with the matching `Authorization` header via
-`webHeaderParameters`.
-
-## Preview what leaves your network
-
-```sh
-pnpm relayctl map preview --config relay.yaml --route payabli-settlements \
-  --sample test/fixtures/payabli-settlement-funded.json
-```
-
-Prints the exact End Close record that would be forwarded, which source field each output
-came from, and every payload field that is **not** forwarded. Runs locally; nothing is
-sent anywhere.
+Open `http://127.0.0.1:8081` (basic auth) on the host — the config tab shows the seeded
+config; from here on the UI is how configuration changes. Then configure the Payabli
+notifications (`payout_batch_settlement_funded`, `payout_batch_paid`) to POST to
+`https://<your-host>/ingest/payabli-settlements` and `.../ingest/payabli-batches` with
+the matching `Authorization` header via `webHeaderParameters`.
 
 ## Configuration vs. updates
 
-Your config and End Close's version updates travel on **separate channels that cannot
-touch each other**:
-
-- **Config is yours.** `relay.yaml` lives at an absolute path on your host
-  (`/etc/endclose-relay/` by default), outside anything a deployment tool manages, and is
-  mounted read-only. The relay has no write path to its own config — there is no API, UI,
-  or update mechanism that can modify it. Changing the masking allowlist requires host
-  access, through whatever change process you already use (git + config management,
-  Terraform templating a file, or hand edits — the file is the interface).
-- **Updates are ours.** A new version is a new image tag. Updating = pull + recreate; the
-  container starts against the same mounted config and the same data volume. End Close
-  commits to config-schema compatibility within a major version (additive changes only),
-  and release notes flag anything config-related.
-- **Preflight before you update.** Validate your existing config against a new image
-  before switching to it:
-
-  ```sh
-  docker run --rm -v /etc/endclose-relay:/etc/endclose-relay:ro \
-    ghcr.io/endclose/relay:<new-version> node dist/cli/relayctl.js config validate
-  ```
-
-  Schema problems exit non-zero and name the offending field.
-- **Undeploy ≠ update.** A fleet-manager undeploy (`docker compose down -v`) deletes the
-  buffered-events volume. It's a killswitch, not an upgrade path.
+- **Config lives in the appliance, on your volume.** The database is authoritative:
+  every change made in the UI becomes a new immutable config version (hash + timestamp,
+  full history retained). `relay.yaml` on disk is only read once, to seed an empty
+  appliance — redeploys, image updates, and host re-provisioning can never clobber
+  UI-made changes, because the config travels with the `relay-data` volume, which
+  updates don't touch.
+- **Updates are ours.** A new version is a new image tag; updating = pull + recreate
+  against the same volume. End Close commits to config-schema compatibility within a
+  major version (additive changes only) — enforced mechanically in CI, where the shipped
+  configs must stay parseable.
+- **Export for your records.** Download the active YAML from the config tab (e.g. after
+  a masking sign-off, or to keep a copy in your git); seeding a replacement appliance
+  with an exported file reproduces the config exactly.
+- **Undeploy ≠ update.** `docker compose down -v` deletes the volume — config *and*
+  buffered events. It's a killswitch, not an upgrade path. Include the volume in your
+  backups.
 
 ## Development
 
@@ -133,11 +107,13 @@ pnpm dev:all     # mprocs: relay (watch mode) + mock End Close API
 ```
 
 `pnpm dev:all` starts [mprocs](https://github.com/pvolok/mprocs) with the relay in watch
-mode (dev config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`) and a mock End Close
-API that prints every record the relay forwards. Select the `webhooks` process and press
-`s` to fire the Payabli fixture webhooks at the relay; `test` runs vitest in watch mode;
-`ui` runs the status UI (`ui/`) on :5173 with Vite HMR, proxying API calls to the relay —
-the relay itself serves the built UI from `dist/admin-ui` after `pnpm build`.
+mode (seed config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`, admin auth
+`dev:dev`) and a mock End Close API that prints every record the relay forwards. Select
+the `webhooks` process and press `s` to fire the Payabli fixture webhooks; `test` runs
+vitest in watch mode; `ui` runs the admin UI (`ui/`) on :5173 with Vite HMR, proxying API
+calls to the relay — the relay itself serves the built UI from `dist/admin-ui` after
+`pnpm build`. Config is seeded into `./data/dev.db` on first boot; `rm -rf data/` to
+reseed from the YAML.
 
 ## Egress
 

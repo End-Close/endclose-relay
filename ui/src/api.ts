@@ -1,5 +1,5 @@
 // Typed client for the relay admin API (same origin; Vite proxies in dev).
-// Read-only by design: mutations go through relayctl so they carry an actor.
+// Basic auth is handled by the browser (401 → prompt); fetch reuses the cached credential.
 
 export interface RouteStatus {
   id: string
@@ -16,6 +16,7 @@ export interface Status {
   uptime_s: number
   config_hash: string | null
   config_applied_at: string | null
+  restart_pending: boolean
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]
@@ -45,11 +46,45 @@ export interface AuditRow {
   detail_json: string
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<T>
+export interface ConfigInfo {
+  yaml: string
+  hash: string
 }
+
+export interface ValidationResult {
+  valid: boolean
+  hash?: string
+  routes?: string[]
+  secret_envs?: { name: string; set: boolean }[]
+  error?: string
+}
+
+export interface PreviewResult {
+  record?: Record<string, unknown>
+  report?: { mapped: Record<string, string>; hashed: string[]; not_forwarded: string[] }
+  error?: string
+}
+
+export interface ConfigVersion {
+  id: number
+  applied_at: string
+  config_hash: string
+  applied_by: string
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    body: body === undefined ? null : JSON.stringify(body),
+  })
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string }
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  return data
+}
+
+const get = <T>(path: string) => request<T>('GET', path)
+const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body)
 
 export const fetchStatus = () => get<Status>('/status')
 
@@ -62,3 +97,22 @@ export function fetchEvents(filter: { status?: string; route?: string; limit?: n
 }
 
 export const fetchAudit = (limit = 200) => get<AuditRow[]>(`/audit?limit=${limit}`)
+
+export const setKillswitch = (state: 'none' | 'pause' | 'panic') =>
+  post<{ global: string }>('/killswitch', { state })
+
+export const setRoutePaused = (route: string, paused: boolean) =>
+  post<{ route: string; paused: boolean }>(`/routes/${route}/pause`, { paused })
+
+export const replayEvent = (id: number) => post<{ replayed: number }>(`/events/${id}/replay`)
+export const replayAllParked = () => post<{ replayed: number }>('/events/replay-parked')
+
+export const fetchConfig = () => get<ConfigInfo>('/config')
+export const validateConfig = (yaml: string) => post<ValidationResult>('/config/validate', { yaml })
+export const saveConfig = (yaml: string) =>
+  post<{ applied: string; restart_pending: boolean }>('/config', { yaml })
+export const previewConfig = (yaml: string, route: string, sample: unknown) =>
+  post<PreviewResult>('/config/preview', { yaml, route, sample })
+export const fetchConfigVersions = () => get<ConfigVersion[]>('/config/versions')
+export const fetchConfigVersion = (id: number) =>
+  get<ConfigVersion & { config_yaml: string }>(`/config/versions/${id}`)

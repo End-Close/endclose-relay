@@ -51,3 +51,25 @@ th { color: var(--muted); font-weight: normal; }
 .error-cell { max-width: 24rem; overflow-wrap: break-word; }
 .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
 code.hash { font-size: 12px; color: var(--muted); }
+
+button {
+  font: inherit; background: none; color: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.6rem;
+}
+button:hover:not(:disabled) { border-color: currentColor; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.danger { color: var(--bad); }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; }
+.tabs button.active { border-bottom-color: currentColor; }
+.ks-controls button { margin-left: 0.35rem; }
+
+h2 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
+
+.yaml-editor, .sample-editor, .preview-output, .validation-error {
+  width: 100%; box-sizing: border-box; font: 12px/1.5 inherit;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0.6rem;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.yaml-editor { min-height: 24rem; resize: vertical; }
+.sample-editor { min-height: 8rem; resize: vertical; }
+.preview-output, .validation-error { overflow-x: auto; white-space: pre; }

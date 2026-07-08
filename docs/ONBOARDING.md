@@ -12,11 +12,12 @@ whole sandbox phase to take about an hour of hands-on time.
   :8443).
 - Egress allowed to `api.endclose.com:443` and your image registry. Nothing else is
   needed (see `docs/SECURITY.md`).
-- Four secrets generated into `.env` (see `relay.example.yaml` header):
+- Five secrets generated into `.env` (see `relay.example.yaml` header):
   `ENDCLOSE_API_KEY` (issued by End Close), `PAYABLI_WEBHOOK_SECRET` (random token you
   will also configure in Payabli, e.g. `Bearer $(openssl rand -hex 24)`),
   `RELAY_DATA_KEY` and `MASKING_HMAC_KEY` (32+ random chars each; back these up — data
-  at rest is unreadable without them).
+  at rest is unreadable without them), and `ADMIN_BASIC_AUTH=user:password` for the
+  admin UI.
 
 **End Close side (we do this with you):**
 - Create one data stream per route: `payabli_settlements_funded`,
@@ -32,21 +33,20 @@ whole sandbox phase to take about an hour of hands-on time.
 ```sh
 mkdir -p /opt/endclose-relay /etc/endclose-relay
 cd /opt/endclose-relay
-# copy docker-compose.yaml + .env here, and relay.yaml to /etc/endclose-relay/
+# copy docker-compose.yaml + .env here, and the seed relay.yaml to /etc/endclose-relay/
 docker compose up -d
-
-# install the host CLI wrapper once
-docker compose exec relay cat /app/bin/relayctl | sudo tee /usr/local/bin/relayctl > /dev/null
-sudo chmod +x /usr/local/bin/relayctl
-
-relayctl status        # expect: killswitch none, both routes listed, 0 events
 ```
 
-Start from `relay.example.yaml`; the reference for every field is `docs/CONFIG.md`. For
-sandbox, set the Payabli IP allowlist to the sandbox egress IP (`52.3.204.115`).
+Start the seed from `relay.example.yaml`; the reference for every field is
+`docs/CONFIG.md`. For sandbox, set the Payabli IP allowlist to the sandbox egress IP
+(`52.3.204.115`). The seed is read once, on first boot — from then on, configuration is
+managed in the admin UI.
 
-**Checkpoint:** `relayctl status` is green and the End Close dashboard shows the relay's
-data streams (empty).
+Open the **admin UI** at `http://127.0.0.1:8081` on the host (basic auth from
+`ADMIN_BASIC_AUTH`; from your workstation: `ssh -L 8081:127.0.0.1:8081 <host>`).
+
+**Checkpoint:** the status tab shows both routes, killswitch "forwarding", 0 events —
+and the End Close dashboard shows the relay's data streams (empty).
 
 ## 2. Point Payabli at the relay
 
@@ -71,38 +71,27 @@ For each, set the auth header via `webHeaderParameters` to exactly the value of
 > dedupes by stable event ID, so this is harmless — but configure one level to keep the
 > logs clean.
 
-Fire test transactions in the Payabli sandbox and watch:
-
-```sh
-relayctl status                 # delivered counts increment
-relayctl events ls --limit 10   # both event types, status=delivered
-```
+Fire test transactions in the Payabli sandbox and watch the admin UI: the status tab's
+delivered counts increment, and the events tab shows both event types with status
+`delivered`.
 
 **Checkpoint:** records visible in the End Close staging data streams with the expected
 amounts and metadata.
 
 ## 3. Masking sign-off (the trust ceremony)
 
-With your security contact, review exactly what leaves your network:
-
-```sh
-relayctl map preview --route payabli-settlements --sample settlement.json
-relayctl map preview --route payabli-batches --sample batch.json
-```
-
-The output is the exact outbound record, each field's source, and — the important part —
-`not_forwarded`: every payload field that stays local. Iterate on the `map` blocks until
-your security team approves, then record the approved config:
-
-```sh
-relayctl config validate    # prints the config_hash
-```
+With your security contact, open the admin UI's **config tab** and use **map preview**:
+paste a sample payload for each route and review the exact outbound record, each field's
+source, and — the important part — `not_forwarded`: every payload field that stays
+local. Iterate on the `map` blocks in the editor (preview works on the draft, before
+anything is saved) until your security team approves, then **apply**. The applied
+version's `config_hash` is shown in the header and version history.
 
 End Close pins that hash on our side and alerts if a relay ever reports a different one.
-Any local change is also visible in `relayctl audit export` (action `config.apply`, with
-actor and hash).
+Every later change appends a new version and an audit entry. **Download the approved
+YAML** from the config tab for your sign-off records.
 
-**Checkpoint:** written sign-off referencing the config_hash.
+**Checkpoint:** written sign-off referencing the config_hash; exported YAML archived.
 
 ## 4. Go-live
 
@@ -134,12 +123,11 @@ payloads).
 
 **Runbooks:**
 
-- *Parked events* (`relayctl events ls --status parked`): read `last_error`. Mapping
-  errors usually mean a payload-shape change — fix the map, `relayctl config apply`,
-  then `relayctl events replay --parked`. Rejected-by-End-Close rows: contact us, then
-  replay.
-- *Pause for a change window*: `relayctl pause` (events keep buffering, nothing is
-  lost), do your work, `relayctl resume`, watch the queue drain.
+- *Parked events* (events tab, filter status=parked): read `last_error`. Mapping
+  errors usually mean a payload-shape change — fix the map in the config tab, apply,
+  then "replay all parked". Rejected-by-End-Close rows: contact us, then replay.
+- *Pause for a change window*: pause from the status tab (events keep buffering,
+  nothing is lost), do your work, resume, watch the queue drain.
 - *Relay down longer than ~10 minutes*: Payabli only retries a failed delivery 2 times
   at 5-minute intervals, so an extended outage (or `panic`) can miss events. Recover
   via Payabli's notification logs: search `POST /api/v2/notificationlogs` for failed
@@ -156,6 +144,6 @@ End Close will coordinate updates with you directly.
 ## Support
 
 - Incident contact: <ops@endclose.com>
-- When contacting us, include: `relayctl status` output and, if relevant,
-  `relayctl events ls --status parked`. Never send payload contents — we don't want
-  them, and `relayctl` never prints them.
+- When contacting us, include: the status tab contents (a screenshot is fine) and, if
+  relevant, the parked-events list. Never send payload contents — we don't want them,
+  and the UI never displays them.

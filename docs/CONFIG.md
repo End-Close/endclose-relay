@@ -1,10 +1,11 @@
-# relay.yaml Reference
+# Configuration Reference
 
-The complete configuration surface. Authoritative source: `src/config/schema.ts` (zod);
-anything the schema rejects fails at boot and in `relayctl config validate`. Shipped
-configs (`relay.example.yaml`, `dev/relay.dev.yaml`) are validated in CI, which is how
-we keep the compatibility promise: schema changes that would break an existing config
-fail our build.
+The complete configuration surface — a declarative YAML document, edited and versioned
+in the admin UI's config tab (a `relay.yaml` file seeds the appliance once, on first
+boot). Authoritative source: `src/config/schema.ts` (zod); anything the schema rejects
+fails validation in the UI and at boot. Shipped configs (`relay.example.yaml`,
+`dev/relay.dev.yaml`) are validated in CI, which is how we keep the compatibility
+promise: schema changes that would break an existing config fail our build.
 
 Secrets never appear in this file — fields ending in `_env` name an **environment
 variable** that holds the secret.
@@ -16,9 +17,8 @@ variable** that holds the secret.
 | `endclose` | `base_url` | `https://api.endclose.com/v1` | End Close public API |
 | | `api_key_env` | `ENDCLOSE_API_KEY` | env var holding the API key |
 | `ingest` | `port` / `host` | `8443` / `0.0.0.0` | webhook listener |
-| `admin` | `port` / `host` | `8081` / `127.0.0.1` | admin API + status UI; loopback-only by design |
+| `admin` | `port` / `host` | `8081` / `0.0.0.0` | admin UI/API; **mandatory** `ADMIN_BASIC_AUTH=user:pass`; compose publishes it to the host's loopback only |
 | `metrics` | `port` / `host` | `9090` / `0.0.0.0` | Prometheus + `/healthz` `/readyz`; not published by default; optional `METRICS_BASIC_AUTH=user:pass` |
-| `storage` | `db_path` | `/var/lib/endclose-relay/relay.db` | SQLite buffer (env override: `RELAY_DB_PATH`) |
 | `dispatch` | `batch_max` | `100` | records per bulk POST (max 1000) |
 | | `poll_interval_ms` | `250` | dispatcher wake interval |
 | | `backoff_base_ms` / `backoff_cap_ms` | `1000` / `600000` | retry curve: base·2ⁿ ±20% jitter, capped |
@@ -27,8 +27,11 @@ variable** that holds the secret.
 | | `ledger_days` | `30` | their rows (idempotency ledger) deleted after |
 | `routes` | | *required, ≥1* | see below |
 
-Additional env vars (not in the file): `RELAY_CONFIG` (config path), `RELAY_DATA_KEY`
-(at-rest encryption), `MASKING_HMAC_KEY` (keys the `hash` transform), `LOG_LEVEL`.
+Additional env vars (not in the config): `ADMIN_BASIC_AUTH` (required), `RELAY_CONFIG`
+(seed file path, default `/etc/endclose-relay/relay.yaml`), `RELAY_DB_PATH` (SQLite
+buffer, default `/var/lib/endclose-relay/relay.db` — env-only since the database must
+open before config can be read from it), `RELAY_DATA_KEY` (at-rest encryption),
+`MASKING_HMAC_KEY` (keys the `hash` transform), `METRICS_BASIC_AUTH`, `LOG_LEVEL`.
 
 ## Routes
 
@@ -102,14 +105,17 @@ values it never sees raw; the key never leaves the appliance).
 string values are redacted, and validation rejects mapping sensitive-named fields (cvv,
 account/routing numbers, ssn, password, api key, …) unless hashed.
 
-**Preview before anything is sent:**
+**Preview before anything is sent:** the config tab's map preview runs any sample
+payload through a route's map — against the draft in the editor, before saving — and
+shows the outbound record plus every field that is *not* forwarded.
 
-```sh
-relayctl map preview --route <id> --sample payload.json
-```
+## Lifecycle
 
-## Applying changes
-
-Edit the file, then `relayctl config plan` (diff vs. running) and
-`relayctl config apply` (no restart needed). Applies are recorded in
-`config_versions` with the file's SHA-256 hash and audited with the acting user.
+The database is authoritative. `relay.yaml` seeds an empty appliance on first boot and
+is ignored afterwards. Edits happen in the config tab: **validate** (schema + secret
+env status), **preview**, **apply** — each apply appends an immutable version (full
+YAML, SHA-256 hash, timestamp) and an audit entry. Route-level changes take effect
+immediately; changes to ports, the `endclose` block, or dispatch/retention tuning apply
+on the next container restart (the UI flags "restart pending"). The version history
+supports loading any previous version back into the editor to restore it, and the
+active config can be downloaded as YAML at any time.

@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: Object.fromEntries(
-      ['/status', '/events', '/audit', '/config'].map((p) => [
+      ['/status', '/events', '/audit', '/config', '/killswitch', '/routes'].map((p) => [
         p,
         { target: 'http://127.0.0.1:8081', changeOrigin: true },
       ]),

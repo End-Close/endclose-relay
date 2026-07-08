@@ -1,4 +1,9 @@
-# endclose-relay configuration
+# endclose-relay configuration (first-boot seed)
+#
+# This file is read ONCE, when the appliance database is empty, to seed the initial
+# configuration. After that the config lives in the appliance database (on the data
+# volume, versioned) and is managed in the admin UI at :8081 — where you can also
+# export the active config back to YAML at any time.
 #
 # Secrets are never written in this file — every secret is referenced by the name of an
 # environment variable (set them in .env next to docker-compose.yaml).
@@ -10,6 +15,7 @@
 #   RELAY_DATA_KEY          32+ chars; encrypts buffered payloads at rest (AES-256-GCM)
 #   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` transform.
 #                           Never leaves this appliance.
+#   ADMIN_BASIC_AUTH        user:password protecting the admin UI/API (required)
 #
 # The `map` block of each route is the complete answer to "what leaves our network":
 # only fields named there are forwarded, ever. Paths are dot notation into the payload
@@ -26,9 +32,6 @@ endclose:
 ingest:
   port: 8443
   host: 0.0.0.0
-
-storage:
-  db_path: /var/lib/endclose-relay/relay.db
 
 routes:
   # ── Payabli: settlement funded ──────────────────────────────────────────────

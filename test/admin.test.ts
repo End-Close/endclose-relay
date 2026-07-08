@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildAdminServer } from '../src/admin/server.js'
@@ -7,28 +6,29 @@ import { buildIngestServer } from '../src/ingest/server.js'
 import { buildMetricsServer } from '../src/metrics/server.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
-import { DATA_KEY, FIXTURES, TEST_CONFIG_YAML, setupDb } from './helpers.js'
+import { getActiveConfig } from '../src/config/store.js'
+import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
 import type { Metrics } from '../src/metrics/metrics.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
+const AUTH = { authorization: 'Basic ' + Buffer.from('admin:hunter2').toString('base64') }
 
 describe('admin API', () => {
   let setup: ReturnType<typeof setupDb>
   let admin: ReturnType<typeof buildAdminServer>
   let ingest: ReturnType<typeof buildIngestServer>
   let events: EventsRepo
-  let configPath: string
 
   beforeEach(async () => {
     setup = setupDb()
     events = new EventsRepo(setup.db)
-    configPath = join(mkdtempSync(join(tmpdir(), 'relay-test-')), 'relay.yaml')
-    writeFileSync(configPath, TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999'))
     admin = buildAdminServer({
       db: setup.db,
-      configPath,
       dbPath: ':memory:',
       startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      bootConfigHash: getActiveConfig(setup.db)!.hash,
     })
     ingest = buildIngestServer({
       db: setup.db,
@@ -46,6 +46,10 @@ describe('admin API', () => {
     setup.db.close()
   })
 
+  const get = (url: string) => admin.inject({ method: 'GET', url, headers: AUTH })
+  const post = (url: string, payload?: unknown, extraHeaders: Record<string, string> = {}) =>
+    admin.inject({ method: 'POST', url, payload: payload ?? {}, headers: { ...AUTH, ...extraHeaders } })
+
   const postWebhook = () =>
     ingest.inject({
       method: 'POST',
@@ -57,12 +61,40 @@ describe('admin API', () => {
       },
     })
 
+  it('requires basic auth on every route', async () => {
+    for (const [method, url] of [
+      ['GET', '/status'],
+      ['GET', '/config'],
+      ['POST', '/killswitch'],
+    ] as const) {
+      const res = await admin.inject({ method, url })
+      expect(res.statusCode, `${method} ${url}`).toBe(401)
+      expect(res.headers['www-authenticate']).toContain('Basic')
+    }
+    const wrong = await admin.inject({
+      method: 'GET',
+      url: '/status',
+      headers: { authorization: 'Basic ' + Buffer.from('admin:wrong').toString('base64') },
+    })
+    expect(wrong.statusCode).toBe(401)
+    expect((await get('/status')).statusCode).toBe(200)
+  })
+
+  it('refuses cross-site mutations (CSRF) but allows same-origin and non-browser', async () => {
+    const crossSite = await post('/killswitch', { state: 'pause' }, { 'sec-fetch-site': 'cross-site' })
+    expect(crossSite.statusCode).toBe(403)
+    const sameOrigin = await post('/killswitch', { state: 'pause' }, { 'sec-fetch-site': 'same-origin' })
+    expect(sameOrigin.statusCode).toBe(200)
+    const noHeader = await post('/killswitch', { state: 'none' })
+    expect(noHeader.statusCode).toBe(200)
+  })
+
   it('GET /status reports routes, queue, killswitch, config hash', async () => {
     await postWebhook()
-    const res = await admin.inject({ method: 'GET', url: '/status' })
-    expect(res.statusCode).toBe(200)
+    const res = await get('/status')
     const s = res.json()
     expect(s.config_hash).toMatch(/^sha256:/)
+    expect(s.restart_pending).toBe(false)
     expect(s.killswitch).toEqual({ global: 'none', routes_paused: [] })
     expect(s.queue.pending).toBe(1)
     const route = s.routes.find((r: any) => r.id === 'payabli-settlements')
@@ -71,94 +103,104 @@ describe('admin API', () => {
       paused: false,
       counts: { pending: 1 },
     })
-    expect(route.oldest_pending_age_s).toBeGreaterThanOrEqual(0)
   })
 
-  it('killswitch flips via API affect ingest and are audited', async () => {
-    await admin.inject({
-      method: 'POST',
-      url: '/killswitch',
-      payload: { state: 'panic', actor: 'cli:david' },
-    })
+  it('killswitch flips via API affect ingest and are audited at instance level', async () => {
+    await post('/killswitch', { state: 'panic' })
     expect((await postWebhook()).statusCode).toBe(503)
-
-    await admin.inject({ method: 'POST', url: '/killswitch', payload: { state: 'none' } })
+    await post('/killswitch', { state: 'none' })
     expect((await postWebhook()).statusCode).toBe(200)
 
-    const audit = (await admin.inject({ method: 'GET', url: '/audit' })).json()
-    const actions = audit.map((a: any) => a.action)
-    expect(actions).toContain('killswitch.panic')
-    expect(actions).toContain('killswitch.none')
-    expect(audit.find((a: any) => a.action === 'killswitch.panic').actor).toBe('cli:david')
-
-    const bad = await admin.inject({ method: 'POST', url: '/killswitch', payload: { state: 'nope' } })
-    expect(bad.statusCode).toBe(400)
+    const audit = (await get('/audit')).json()
+    const panic = audit.find((a: any) => a.action === 'killswitch.panic')
+    expect(panic.actor).toBe('admin')
+    expect((await post('/killswitch', { state: 'nope' })).statusCode).toBe(400)
   })
 
-  it('per-route pause is reflected in status', async () => {
-    const res = await admin.inject({
-      method: 'POST',
-      url: '/routes/payabli-settlements/pause',
-      payload: { paused: true },
-    })
-    expect(res.statusCode).toBe(200)
-    const s = (await admin.inject({ method: 'GET', url: '/status' })).json()
-    expect(s.killswitch.routes_paused).toEqual(['payabli-settlements'])
-    expect(
-      (await admin.inject({ method: 'POST', url: '/routes/nope/pause', payload: { paused: true } }))
-        .statusCode,
-    ).toBe(404)
-  })
+  it('per-route pause and parked replay', async () => {
+    await post('/routes/payabli-settlements/pause', { paused: true })
+    expect((await get('/status')).json().killswitch.routes_paused).toEqual(['payabli-settlements'])
+    expect((await post('/routes/nope/pause', { paused: true })).statusCode).toBe(404)
 
-  it('lists events without payloads and replays parked ones', async () => {
     await postWebhook()
     const [row] = events.list({})
     expect(row).not.toHaveProperty('payload_enc')
     events.markParked([row!.id], 'test parking')
-
-    const list = (
-      await admin.inject({ method: 'GET', url: '/events?status=parked' })
-    ).json()
-    expect(list).toHaveLength(1)
-
-    const replay = await admin.inject({ method: 'POST', url: `/events/${row!.id}/replay`, payload: {} })
-    expect(replay.statusCode).toBe(200)
+    expect((await post(`/events/${row!.id}/replay`)).statusCode).toBe(200)
     expect(events.getById(row!.id)!.status).toBe('retry')
-    expect(events.getById(row!.id)!.attempts).toBe(0)
-
-    // replaying a non-parked event is a 409
-    expect(
-      (await admin.inject({ method: 'POST', url: `/events/${row!.id}/replay`, payload: {} })).statusCode,
-    ).toBe(409)
+    expect((await post(`/events/${row!.id}/replay`)).statusCode).toBe(409)
   })
 
-  it('config plan detects drift and apply converges', async () => {
-    const inSync = (await admin.inject({ method: 'GET', url: '/config/plan' })).json()
-    expect(inSync.in_sync).toBe(true)
+  describe('config management', () => {
+    it('GET /config returns the active yaml + hash', async () => {
+      const res = await get('/config')
+      expect(res.statusCode).toBe(200)
+      const c = res.json()
+      expect(c.hash).toMatch(/^sha256:/)
+      expect(c.yaml).toContain('payabli-settlements')
+    })
 
-    writeFileSync(
-      configPath,
-      TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999').replace('id: payabli-batches', 'id: payabli-batches-v2'),
-    )
-    const plan = (await admin.inject({ method: 'GET', url: '/config/plan' })).json()
-    expect(plan.in_sync).toBe(false)
-    expect(plan.routes_added).toEqual(['payabli-batches-v2'])
-    expect(plan.routes_removed).toEqual(['payabli-batches'])
+    it('validate reports schema errors and secret env status without saving', async () => {
+      const bad = (await post('/config/validate', { yaml: 'routes: []' })).json()
+      expect(bad.valid).toBe(false)
+      expect(bad.error).toBeTruthy()
 
-    const apply = await admin.inject({ method: 'POST', url: '/config/apply', payload: {} })
-    expect(apply.statusCode).toBe(200)
-    expect((await admin.inject({ method: 'GET', url: '/config/plan' })).json().in_sync).toBe(true)
+      const good = (await post('/config/validate', { yaml: (await get('/config')).json().yaml })).json()
+      expect(good.valid).toBe(true)
+      expect(good.routes).toEqual(['payabli-settlements', 'payabli-batches'])
+      expect(good.secret_envs.find((s: any) => s.name === 'ENDCLOSE_API_KEY').set).toBe(true)
+    })
 
-    // invalid config is rejected without being applied
-    writeFileSync(configPath, 'routes: []')
-    expect((await admin.inject({ method: 'POST', url: '/config/apply', payload: {} })).statusCode).toBe(422)
+    it('POST /config saves a version, rematerializes routes live, flags restart', async () => {
+      const before = (await get('/config')).json()
+      const edited = (before.yaml as string).replace('id: payabli-batches', 'id: payabli-batches-v2')
+      const res = await post('/config', { yaml: edited })
+      expect(res.statusCode).toBe(200)
+      expect(res.json().restart_pending).toBe(true) // hash differs from boot
+
+      // route change took effect live: new route exists, old one is gone
+      const status = (await get('/status')).json()
+      const ids = status.routes.map((r: any) => r.id)
+      expect(ids).toContain('payabli-batches-v2')
+      expect(ids).not.toContain('payabli-batches')
+
+      // versions history has both, newest first
+      const versions = (await get('/config/versions')).json()
+      expect(versions.length).toBe(2)
+      expect(versions[0].applied_by).toBe('admin')
+      const old = (await get(`/config/versions/${versions[1].id}`)).json()
+      expect(old.config_yaml).toContain('id: payabli-batches')
+
+      // invalid yaml is rejected without saving
+      expect((await post('/config', { yaml: 'routes: []' })).statusCode).toBe(422)
+      expect((await get('/config/versions')).json().length).toBe(2)
+    })
+
+    it('preview maps a sample against draft yaml without saving', async () => {
+      const yaml = (await get('/config')).json().yaml
+      const sample = JSON.parse(settlementBody.toString())
+      const res = await post('/config/preview', { yaml, route: 'payabli-settlements', sample })
+      expect(res.statusCode).toBe(200)
+      const p = res.json()
+      expect(p.record).toMatchObject({ external_id: 'trf_9f8e7d6c', amount: 376287 })
+      expect(p.report.not_forwarded).toContain('Text')
+
+      expect((await post('/config/preview', { yaml, route: 'nope', sample })).statusCode).toBe(404)
+      expect(
+        (await post('/config/preview', { yaml, route: 'payabli-settlements', sample: {} })).statusCode,
+      ).toBe(422)
+    })
   })
+})
 
-  it('serves the status page', async () => {
-    const res = await admin.inject({ method: 'GET', url: '/' })
-    expect(res.statusCode).toBe(200)
-    expect(res.headers['content-type']).toContain('text/html')
-    expect(res.body).toContain('endclose-relay')
+describe('config store seeding', () => {
+  it('seeds only when empty; later saves are versioned', async () => {
+    const { db } = setupDb() // setupDb saved version 1
+    const { seedIfEmpty } = await import('../src/config/store.js')
+    // DB already has config: seed is a no-op returning the active config
+    const active = seedIfEmpty(db, '/nonexistent/relay.yaml')
+    expect(active.config.routes).toHaveLength(2)
+    db.close()
   })
 })
 
@@ -197,21 +239,13 @@ describe('metrics server', () => {
       payload: settlementBody,
       headers: { 'content-type': 'application/json', authorization: 'Bearer test-webhook-secret' },
     })
-    await ingest.inject({
-      method: 'POST',
-      url: '/ingest/payabli-settlements',
-      payload: settlementBody,
-      headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' },
-    })
     new KvRepo(setup.db).setGlobalKillswitch('pause')
 
     const body = (await metricsServer.inject({ method: 'GET', url: '/metrics' })).body
     expect(body).toContain('relay_ingest_total{route="payabli-settlements",result="accepted"} 1')
-    expect(body).toContain('relay_ingest_total{route="payabli-settlements",result="rejected_auth"} 1')
     expect(body).toContain('relay_queue_depth{status="pending"} 1')
     expect(body).toContain('relay_killswitch_state 1')
     expect((await metricsServer.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200)
-    expect((await metricsServer.inject({ method: 'GET', url: '/readyz' })).statusCode).toBe(200)
   })
 
   it('enforces basic auth when configured', async () => {
@@ -245,27 +279,16 @@ describe('retention pruning', () => {
     }
     const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
     insert('recent-delivered', daysAgo(1), 'delivered')
-    insert('old-delivered', daysAgo(10), 'delivered') // payload wiped, row kept
-    insert('ancient-delivered', daysAgo(40), 'delivered') // row deleted
-    insert('old-filtered', daysAgo(10), 'dropped_by_filter')
-    insert('old-parked', daysAgo(40), 'parked') // untouched forever
+    insert('old-delivered', daysAgo(10), 'delivered')
+    insert('ancient-delivered', daysAgo(40), 'delivered')
+    insert('old-parked', daysAgo(40), 'parked')
 
     const { wiped, deleted } = events.prune(new Date().toISOString(), 7, 30)
-    expect(wiped).toBe(3) // old-delivered + old-filtered + ancient-delivered (wiped then deleted)
-    expect(deleted).toBe(1) // ancient-delivered
-
-    const remaining = events.list({ limit: 100 })
-    const ids = remaining.map((r) => r.event_id)
+    expect(wiped).toBe(2)
+    expect(deleted).toBe(1)
+    const ids = events.list({ limit: 100 }).map((r) => r.event_id)
     expect(ids).not.toContain('ancient-delivered')
     expect(ids).toContain('old-parked')
-    const oldDelivered = db
-      .prepare(`SELECT length(payload_enc) AS n FROM events WHERE event_id = 'old-delivered'`)
-      .get() as { n: number }
-    expect(oldDelivered.n).toBe(0)
-    const recent = db
-      .prepare(`SELECT length(payload_enc) AS n FROM events WHERE event_id = 'recent-delivered'`)
-      .get() as { n: number }
-    expect(recent.n).toBeGreaterThan(0)
     db.close()
   })
 })

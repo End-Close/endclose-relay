@@ -17,12 +17,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      # Shipped configs staying parseable (the schema-compatibility promise) is
+      # covered by test/config.test.ts in the suite above.
       - run: pnpm build
-      # Shipped configs must stay parseable by the current schema — this is the
-      # config-compatibility promise from README "Configuration vs. updates",
-      # enforced mechanically.
-      - run: node dist/cli/relayctl.js config validate --config relay.example.yaml
-      - run: node dist/cli/relayctl.js config validate --config dev/relay.dev.yaml
 
   docker:
     runs-on: ubuntu-latest

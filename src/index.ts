@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
 import { openDb } from './db/db.js'
 import { migrate } from './db/migrate.js'
-import { loadConfig, resolveSecret } from './config/load.js'
-import { applyConfig } from './config/apply.js'
+import { resolveSecret } from './config/load.js'
+import { seedIfEmpty } from './config/store.js'
 import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
 import { buildAdminServer } from './admin/server.js'
@@ -16,19 +16,24 @@ import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
 import { log } from './log.js'
 
-async function main(): Promise<void> {
-  const configPath = process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml'
-  const loaded = loadConfig(configPath)
-  const { config } = loaded
+const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
 
+async function main(): Promise<void> {
   const dataKey = deriveKey('RELAY_DATA_KEY', process.env.RELAY_DATA_KEY)
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY)
+  const adminAuth = process.env.ADMIN_BASIC_AUTH
+  if (!adminAuth || !adminAuth.includes(':')) {
+    throw new Error('ADMIN_BASIC_AUTH must be set (format user:password) — the admin UI requires it')
+  }
 
-  const dbPath = process.env.RELAY_DB_PATH ?? config.storage.db_path
+  const dbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
   const db = openDb(dbPath)
   migrate(db)
-  applyConfig(db, loaded, 'boot')
-  log.info('config applied', { config_hash: loaded.hash, routes: config.routes.length })
+
+  // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
+  const loaded = seedIfEmpty(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
+  const { config } = loaded
+  log.info('config active', { config_hash: loaded.hash, routes: config.routes.length })
 
   const events = new EventsRepo(db)
   const kv = new KvRepo(db)
@@ -54,7 +59,14 @@ async function main(): Promise<void> {
   dispatcher.start()
 
   const ingest = buildIngestServer({ db, dataKey, signal, metrics })
-  const admin = buildAdminServer({ db, configPath, dbPath, startedAt: Date.now() })
+  const admin = buildAdminServer({
+    db,
+    dbPath,
+    startedAt: Date.now(),
+    basicAuth: adminAuth,
+    maskingKey,
+    bootConfigHash: loaded.hash,
+  })
   const metricsServer = buildMetricsServer({
     metrics,
     ready: () => {

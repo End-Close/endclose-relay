@@ -15,9 +15,6 @@
   "engines": {
     "node": ">=22.12"
   },
-  "bin": {
-    "relayctl": "./dist/cli/relayctl.js"
-  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "dev:all": "mprocs",
@@ -26,8 +23,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p ui",
-    "relayctl": "tsx src/cli/relayctl.ts"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p ui"
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",
