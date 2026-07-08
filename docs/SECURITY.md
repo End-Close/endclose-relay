@@ -74,13 +74,19 @@ termination / load balancer. Requests are verified per route (processor auth hea
 compared in constant time, plus optional source-IP allowlist) before anything is
 stored.
 - **Admin plane** `:8081`**:** the management UI/API, protected by **mandatory basic
-auth** (`ADMIN_BASIC_AUTH`, a credential you generate and hold; the relay refuses to
-boot without it). The shipped compose file publishes it to the **host's loopback only**
-— reachable via SSH tunnel; exposing it wider is a deliberate action on your side and
-should sit behind your internal TLS (basic auth over plaintext HTTP is only acceptable
-host-locally). Mutating requests additionally reject cross-site browser calls
-(`Sec-Fetch-Site` checks; CORS disabled), so a malicious page cannot ride an operator's
-cached credentials. Failed authentications are delayed to blunt brute force.
+auth** (`ADMIN_BASIC_AUTH`, a credential you generate and hold). The shipped compose
+file publishes it to the **host's loopback only** — reachable via SSH tunnel; exposing
+it wider is a deliberate action on your side and should sit behind your internal TLS
+(basic auth over plaintext HTTP is only acceptable host-locally). Mutating requests
+additionally reject cross-site browser calls (`Sec-Fetch-Site` checks; CORS disabled),
+so a malicious page cannot ride an operator's cached credentials. Failed
+authentications are delayed to blunt brute force.
+- **Setup mode:** if required env (`RELAY_DATA_KEY`, `MASKING_HMAC_KEY`,
+`ADMIN_BASIC_AUTH`) is missing or invalid at boot, the relay does not run — it serves a
+static setup page on `:8081` naming the offending variable names and answers everything
+else with 503. That page is intentionally unauthenticated: it exists precisely because
+the admin credential may be the thing that's missing, it appears only while the relay
+holds no data and accepts no webhooks, and it discloses nothing but env-var names.
 - **Metrics** `:9090`**:** not published by default. If you opt in, it exposes operational
 counters only (no payload data), with optional basic auth (`METRICS_BASIC_AUTH`).
 - **Egress allowlist for your firewall:** `api.endclose.com:443`, plus your image
@@ -104,12 +110,14 @@ and never silently dropped.
 
 ## Secrets
 
-All secrets enter via environment variables (`.env`, which you manage): the End Close
-API key, processor webhook secrets, and the two appliance keys. `relay.yaml` references
-secrets **by env-var name only** — the file contains no secret material and is safe to
-keep in your git. Secrets are never written to the database, the logs, or the audit
+All secrets enter as environment variables on the relay container, provided through
+whatever secret-management mechanism you already use: the End Close API key, processor
+webhook secrets, and the two appliance keys. Configuration references secrets **by
+env-var name only** — it contains no secret material and is safe to keep in your git. Secrets are never written to the database, the logs, or the audit
 log. The logging layer only accepts scalar metadata by construction — there is no API
-for logging a payload.
+for logging a payload. Missing secrets degrade safely: the UI banners any
+config-referenced secret that isn't set, and a missing End Close API key means events
+buffer locally without forwarding — nothing is lost and nothing falls open.
 
 ## Configuration provenance
 
@@ -121,7 +129,8 @@ only an authenticated admin request can, and each one appends a version and an a
 entry. The active config is exportable as YAML at any time (for sign-off records, your
 git, or seeding a replacement appliance). Secrets are not part of configuration: the
 YAML references env-var names only, and the UI can neither display nor set secret
-values — rotating a credential requires host access to `.env`.
+values — rotating a credential means changing the container's environment through your
+secret-management mechanism and recreating the container.
 
 ## Killswitches and audit
 
@@ -129,11 +138,11 @@ You hold three levers, flippable only through the authenticated admin plane, nev
 remotely by End Close:
 
 
-| Lever                | Ingest             | Forwarding             | Data loss                                |
-| -------------------- | ------------------ | ---------------------- | ---------------------------------------- |
-| `pause --route <id>` | acks + buffers     | stopped for that route | none                                     |
-| `pause` (global)     | acks + buffers     | stopped                | none                                     |
-| `panic`              | refused (HTTP 503) | stopped                | none within the processor's retry window |
+| Lever            | Ingest             | Forwarding             | Data loss                                |
+| ---------------- | ------------------ | ---------------------- | ---------------------------------------- |
+| per-route pause  | acks + buffers     | stopped for that route | none                                     |
+| global pause     | acks + buffers     | stopped                | none                                     |
+| panic            | refused (HTTP 503) | stopped                | none within the processor's retry window |
 
 
 Every killswitch flip, config apply, and event replay is written to an **append-only

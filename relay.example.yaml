@@ -6,7 +6,8 @@
 # export the active config back to YAML at any time.
 #
 # Secrets are never written in this file — every secret is referenced by the name of an
-# environment variable (set them in .env next to docker-compose.yaml).
+# environment variable, provided to the relay container however you manage secrets
+# (secret-manager env injection, an optional .env next to docker-compose.yaml, …).
 #
 # Required env vars:
 #   ENDCLOSE_API_KEY        End Close API key (issued per appliance, environment-scoped)

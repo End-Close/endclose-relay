@@ -255,7 +255,8 @@ export default function App() {
         <p className="env-warning">
           ⚠ missing secrets:{' '}
           {status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')} — the relay
-          cannot verify or forward without them. Set them in <code>.env</code> and restart.
+          cannot verify or forward without them. Provide them to the container environment
+          and recreate it.
         </p>
       )}
       <nav className="tabs">

@@ -3,9 +3,10 @@
 # 1. Put a seed config at /etc/endclose-relay/relay.yaml (start from relay.example.yaml).
 #    It is read ONCE, on first boot, to seed the appliance; after that the config lives
 #    in the appliance database (on the relay-data volume) and is managed in the admin UI.
-# 2. Create .env with: ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY,
-#    MASKING_HMAC_KEY, and ADMIN_BASIC_AUTH=user:password (required — protects the
-#    admin UI).
+# 2. Provide the required environment variables to the relay service however you
+#    manage secrets (secret-manager env injection, an optional .env next to this file,
+#    …): ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY, MASKING_HMAC_KEY,
+#    and ADMIN_BASIC_AUTH=user:password (protects the admin UI).
 # 3. docker compose up -d
 # 4. Admin UI: http://127.0.0.1:8081 on this host (SSH tunnel to reach it remotely, or
 #    front it with your internal TLS proxy to expose it wider — your call).
@@ -24,7 +25,9 @@ services:
       - "127.0.0.1:8081:8081" # admin UI/API (basic auth) — host-local by default
       # Optional: expose Prometheus metrics + health probes to your monitoring network.
       # - "9090:9090"
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false # one way to provide the env vars; injection via your secret manager works too
     environment:
       RELAY_CONFIG: /etc/endclose-relay/relay.yaml # first-boot seed only
     volumes:

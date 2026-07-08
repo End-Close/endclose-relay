@@ -58,8 +58,9 @@ function setupPage(missing: EnvCheck[]): string {
 <p>The relay refused to start because required environment variables are missing or
 invalid. <strong>No webhooks are being accepted or forwarded.</strong></p>
 <table>${rows}</table>
-<p>Set them in the <code>.env</code> file next to <code>docker-compose.yaml</code>
-(see <code>relay.example.yaml</code> for what each one does), then restart:</p>
+<p>Provide them as environment variables on the relay container — through whatever
+mechanism you manage secrets with (see <code>relay.example.yaml</code> for what each one
+does) — then recreate it:</p>
 <pre>docker compose up -d --force-recreate relay</pre>
 <p>This page is intentionally unauthenticated — it appears only while the relay is
 unconfigured and reveals nothing but variable names.</p>`

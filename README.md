@@ -68,13 +68,11 @@ kept until replayed — never silently dropped.
 ```sh
 mkdir -p /etc/endclose-relay
 cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed
-cat > .env <<'EOF'
-ENDCLOSE_API_KEY=...
-PAYABLI_WEBHOOK_SECRET=Bearer <random-token-you-also-set-in-payabli>
-RELAY_DATA_KEY=<32+ random chars>
-MASKING_HMAC_KEY=<32+ random chars>
-ADMIN_BASIC_AUTH=admin:<strong password>
-EOF
+# Provide the required env vars however you manage secrets; the compose file also
+# reads an optional .env next to it if that's your preference:
+#   ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET (Bearer <token you also set in Payabli>),
+#   RELAY_DATA_KEY + MASKING_HMAC_KEY (32+ random chars each),
+#   ADMIN_BASIC_AUTH=admin:<strong password>
 docker compose up -d
 ```
 

@@ -12,12 +12,14 @@ whole sandbox phase to take about an hour of hands-on time.
   :8443).
 - Egress allowed to `api.endclose.com:443` and your image registry. Nothing else is
   needed (see `docs/SECURITY.md`).
-- Five secrets generated into `.env` (see `relay.example.yaml` header):
-  `ENDCLOSE_API_KEY` (issued by End Close), `PAYABLI_WEBHOOK_SECRET` (random token you
-  will also configure in Payabli, e.g. `Bearer $(openssl rand -hex 24)`),
-  `RELAY_DATA_KEY` and `MASKING_HMAC_KEY` (32+ random chars each; back these up — data
-  at rest is unreadable without them), and `ADMIN_BASIC_AUTH=user:password` for the
-  admin UI.
+- Five secrets provided to the relay container as **environment variables**, through
+  whatever mechanism you normally use for secrets (your secret manager's env injection,
+  Compose `env_file`, systemd credentials, …): `ENDCLOSE_API_KEY` (issued by End Close),
+  `PAYABLI_WEBHOOK_SECRET` (random token you will also configure in Payabli, e.g.
+  `Bearer $(openssl rand -hex 24)`), `RELAY_DATA_KEY` and `MASKING_HMAC_KEY` (32+ random
+  chars each; back these up — data at rest is unreadable without them), and
+  `ADMIN_BASIC_AUTH=user:password` for the admin UI. See the `relay.example.yaml` header
+  for what each one does.
 
 **End Close side (we do this with you):**
 - Create one data stream per route: `payabli_settlements_funded`,
@@ -33,9 +35,15 @@ whole sandbox phase to take about an hour of hands-on time.
 ```sh
 mkdir -p /opt/endclose-relay /etc/endclose-relay
 cd /opt/endclose-relay
-# copy docker-compose.yaml + .env here, and the seed relay.yaml to /etc/endclose-relay/
+# copy docker-compose.yaml here, the seed relay.yaml to /etc/endclose-relay/,
+# and wire the five environment variables into the relay service (secret manager,
+# env_file, ... — however you manage secrets)
 docker compose up -d
 ```
+
+If any required variable is missing or invalid, the relay serves a **setup page** on
+`:8081` naming exactly what's wrong (and does nothing else) — fix the environment and
+recreate the container.
 
 Start the seed from `relay.example.yaml`; the reference for every field is
 `docs/CONFIG.md`. For sandbox, set the Payabli IP allowlist to the sandbox egress IP
@@ -95,7 +103,8 @@ YAML** from the config tab for your sign-off records.
 
 ## 4. Go-live
 
-1. End Close issues the production API key; swap it in `.env`.
+1. End Close issues the production API key; update `ENDCLOSE_API_KEY` in your secret
+   store and recreate the container.
 2. Update the route IP allowlists to Payabli's production egress IP (`54.166.54.170`).
 3. Configure the production Payabli notifications (same two events, production
    paypoint), fire a low-value live transaction if feasible.
