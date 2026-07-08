@@ -35,7 +35,17 @@ relayctl audit export                # append-only audit log as JSONL
 relayctl config plan | apply         # diff/apply an edited relay.yaml without restart
 ```
 
-In Docker: `docker compose exec relay node dist/cli/relayctl.js status`.
+On the Docker host, install the bundled wrapper once and `relayctl` works natively from
+any SSH session (it finds the relay container by label and attributes audit entries to
+your username):
+
+```sh
+docker compose exec relay cat /app/bin/relayctl | sudo tee /usr/local/bin/relayctl > /dev/null
+sudo chmod +x /usr/local/bin/relayctl
+relayctl status
+```
+
+(Equivalent raw form: `docker compose exec relay node dist/cli/relayctl.js status`.)
 
 A read-only status UI (React, built into the image — no CDN assets, so egress allowlists
 stay tight) is served at `http://127.0.0.1:8081/`: live status, an event browser, and the

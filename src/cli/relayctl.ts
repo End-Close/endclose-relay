@@ -12,7 +12,6 @@ import type { Json } from '../mask/paths.js'
 import type { RelayConfig } from '../config/schema.js'
 
 const ADMIN_URL = process.env.RELAY_ADMIN_URL ?? 'http://127.0.0.1:8081'
-const ACTOR = `cli:${userInfo().username}`
 
 function usage(): never {
   console.error(`usage:
@@ -37,6 +36,10 @@ function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
   return i >= 0 ? process.argv[i + 1] : undefined
 }
+
+// The bin/relayctl host wrapper passes --actor with the SSH user; inside a container the
+// OS username is just the service account ("relay"), which is useless in an audit trail.
+const ACTOR = arg('actor') ?? `cli:${userInfo().username}`
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`)
 }
@@ -205,7 +208,10 @@ function mapPreview(): void {
     console.error(`route not found: ${routeId} (have: ${config.routes.map((r) => r.id).join(', ')})`)
     process.exit(1)
   }
-  const sample = JSON.parse(readFileSync(requireArg('sample'), 'utf8')) as Json
+  // '-' reads the sample from stdin — how the host wrapper feeds a host-side file into
+  // the containerized CLI.
+  const samplePath = requireArg('sample')
+  const sample = JSON.parse(readFileSync(samplePath === '-' ? 0 : samplePath, 'utf8')) as Json
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY ?? 'preview-only-key')
   const { record, report } = mapEvent(route, sample, new Date().toISOString(), maskingKey)
   console.log(JSON.stringify({ route: routeId, record, report }, null, 2))

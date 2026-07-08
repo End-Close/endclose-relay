@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# relayctl — host-side wrapper for the endclose-relay CLI.
+#
+# The relay's admin API binds to loopback INSIDE the container and is never published,
+# so operating the relay means exec-ing into it. This wrapper hides that: it finds the
+# relay container by Docker label and forwards every command, attributing audit entries
+# to the invoking (SSH) user rather than the container's service account.
+#
+# Install (once, on the Docker host):
+#   docker compose exec relay cat /app/bin/relayctl | sudo tee /usr/local/bin/relayctl > /dev/null
+#   sudo chmod +x /usr/local/bin/relayctl
+#
+# Override container discovery with RELAY_CONTAINER=<name>.
+set -euo pipefail
+
+container="${RELAY_CONTAINER:-$(docker ps --filter label=com.endclose.relay --format '{{.Names}}' | head -n1)}"
+if [[ -z "$container" ]]; then
+  echo "relayctl: no running relay container found (label com.endclose.relay)." >&2
+  echo "relayctl: is the relay up? Try: docker ps · or set RELAY_CONTAINER=<name>" >&2
+  exit 1
+fi
+
+# Rewrite `--sample <host path>` to `--sample -` and stream the file over stdin, so
+# `relayctl map preview` works with files that only exist on the host.
+args=()
+sample_file=""
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "--sample" && "$a" != "-" ]]; then
+    if [[ ! -f "$a" ]]; then
+      echo "relayctl: sample file not found: $a" >&2
+      exit 1
+    fi
+    sample_file="$a"
+    args+=("-")
+  else
+    args+=("$a")
+  fi
+  prev="$a"
+done
+
+actor="cli:$(id -un)"
+if [[ -n "$sample_file" ]]; then
+  exec docker exec -i "$container" node dist/cli/relayctl.js "${args[@]}" --actor "$actor" < "$sample_file"
+else
+  exec docker exec -i "$container" node dist/cli/relayctl.js "${args[@]}" --actor "$actor"
+fi

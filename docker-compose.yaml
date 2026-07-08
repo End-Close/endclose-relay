@@ -20,6 +20,8 @@ services:
     image: ghcr.io/endclose/relay:0.1.0
     build: .
     restart: unless-stopped
+    labels:
+      com.endclose.relay: "true" # bin/relayctl (host wrapper) finds the container by this
     ports:
       - "8443:8443" # webhook ingest — front with your own TLS terminator / LB
       # Optional: expose Prometheus metrics + health probes to your monitoring network.
