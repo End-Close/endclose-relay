@@ -40,6 +40,12 @@ own internal TLS proxy.
 - **audit** — the append-only audit log (killswitch flips, config applies, replays),
   downloadable as JSONL.
 
+Boot checks: if required env (`RELAY_DATA_KEY`, `MASKING_HMAC_KEY`, `ADMIN_BASIC_AUTH`)
+is missing or invalid, the relay serves an unauthenticated **setup page** on `:8081`
+naming exactly what's wrong instead of crash-looping — nothing else runs until it's
+fixed. Once running, the UI banners any config-referenced secret that isn't set (a
+missing End Close API key buffers events rather than failing boot).
+
 Prometheus metrics + `/healthz` `/readyz` probes are at `:9090` (optional basic auth via
 `METRICS_BASIC_AUTH`): `relay_ingest_total`, `relay_forward_total`, `relay_queue_depth`,
 `relay_delivery_lag_seconds`, `relay_killswitch_state`, `relay_db_bytes`.

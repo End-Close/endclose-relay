@@ -1,12 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // Admin status UI. Builds into dist/admin-ui, served by the admin server (:8081) —
 // fully self-contained, no CDN assets (customer egress allowlists stay tight).
 // Dev: `pnpm dev:ui` on :5173 proxies API calls to the running relay.
 export default defineConfig({
   root: 'ui',
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: '../dist/admin-ui',
     emptyOutDir: true,

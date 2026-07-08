@@ -95,6 +95,9 @@ describe('admin API', () => {
     const s = res.json()
     expect(s.config_hash).toMatch(/^sha256:/)
     expect(s.restart_pending).toBe(false)
+    // boot-check surface for the UI banner: all secrets set in the test env
+    expect(s.secret_envs.length).toBeGreaterThan(0)
+    expect(s.secret_envs.every((e: any) => e.set)).toBe(true)
     expect(s.killswitch).toEqual({ global: 'none', routes_paused: [] })
     expect(s.queue.pending).toBe(1)
     const route = s.routes.find((r: any) => r.id === 'payabli-settlements')

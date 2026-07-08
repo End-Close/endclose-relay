@@ -2,11 +2,11 @@ import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
 import { openDb } from './db/db.js'
 import { migrate } from './db/migrate.js'
-import { resolveSecret } from './config/load.js'
 import { seedIfEmpty } from './config/store.js'
 import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
 import { buildAdminServer } from './admin/server.js'
+import { buildSetupServer, checkRequiredEnv } from './admin/setup-server.js'
 import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
 import { Dispatcher } from './forward/dispatcher.js'
@@ -19,12 +19,22 @@ import { log } from './log.js'
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
 
 async function main(): Promise<void> {
+  // Boot check: with required env missing we can't run — but instead of crash-looping,
+  // serve a setup page on the admin port naming exactly what's wrong.
+  const missingEnv = checkRequiredEnv()
+  if (missingEnv.length > 0) {
+    log.error('setup required: missing/invalid environment', {
+      missing: missingEnv.map((m) => `${m.name} (${m.problem})`).join(', '),
+    })
+    const setup = buildSetupServer(missingEnv)
+    await setup.listen({ port: 8081, host: '0.0.0.0' })
+    log.warn('serving setup page on :8081 — webhooks are NOT being accepted')
+    return
+  }
+
   const dataKey = deriveKey('RELAY_DATA_KEY', process.env.RELAY_DATA_KEY)
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY)
-  const adminAuth = process.env.ADMIN_BASIC_AUTH
-  if (!adminAuth || !adminAuth.includes(':')) {
-    throw new Error('ADMIN_BASIC_AUTH must be set (format user:password) — the admin UI requires it')
-  }
+  const adminAuth = process.env.ADMIN_BASIC_AUTH!
 
   const dbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
   const db = openDb(dbPath)
@@ -50,10 +60,16 @@ async function main(): Promise<void> {
   })
 
   const signal = new EventEmitter()
-  const client = new EndCloseClient(
-    config.endclose.base_url,
-    resolveSecret(config.endclose.api_key_env),
-  )
+  // A missing API key must not crash the relay: webhooks keep buffering (the point of
+  // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
+  // until the key is provided and the container restarted.
+  const apiKey = process.env[config.endclose.api_key_env] ?? ''
+  if (!apiKey) {
+    log.error('End Close API key env not set — buffering only, nothing will forward', {
+      env: config.endclose.api_key_env,
+    })
+  }
+  const client = new EndCloseClient(config.endclose.base_url, apiKey)
 
   const dispatcher = new Dispatcher({ db, config, client, dataKey, maskingKey, signal, metrics })
   dispatcher.start()

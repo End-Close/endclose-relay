@@ -1,75 +1,78 @@
-:root {
-  color-scheme: light dark;
-  --border: color-mix(in srgb, currentColor 15%, transparent);
-  --muted: color-mix(in srgb, currentColor 55%, transparent);
-  --ok: #2e7d32;
-  --warn: #e65100;
-  --bad: #c62828;
+@import 'tailwindcss';
+
+@theme {
+  --color-ok: #2e7d32;
+  --color-warn: #e65100;
+  --color-bad: #c62828;
+  /* currentColor-relative shades so light/dark both work via color-scheme */
+  --color-line: color-mix(in srgb, currentColor 15%, transparent);
+  --color-faint: color-mix(in srgb, currentColor 5%, transparent);
+  --color-dim: color-mix(in srgb, currentColor 60%, transparent);
 }
 
-body {
-  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  margin: 2rem auto;
-  max-width: 68rem;
-  padding: 0 1rem;
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    @apply mx-auto my-8 max-w-5xl px-4 font-mono text-sm;
+  }
+  h1 {
+    @apply text-lg font-bold;
+  }
+  h1 small {
+    @apply font-normal text-dim;
+  }
+  h2 {
+    @apply mt-6 mb-1 text-base font-bold;
+  }
+  table {
+    @apply my-4 w-full border-collapse;
+  }
+  th,
+  td {
+    @apply border-b border-line px-2.5 py-1.5 text-left align-top;
+  }
+  th {
+    @apply font-normal text-dim;
+  }
+  button {
+    @apply cursor-pointer rounded border border-line px-2.5 py-0.5;
+  }
+  button:hover:not(:disabled) {
+    @apply border-current;
+  }
+  button:disabled {
+    @apply cursor-default opacity-40;
+  }
+  select {
+    @apply rounded border border-line bg-transparent px-1.5 py-0.5;
+  }
+  textarea {
+    @apply w-full font-mono text-xs leading-5;
+  }
 }
 
-h1 { font-size: 1.2rem; margin: 0; }
-h1 small { font-weight: normal; color: var(--muted); }
-
-.meta { color: var(--muted); margin: 0.25rem 0 1rem; }
-
-.tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
-.tabs button {
-  font: inherit; background: none; color: inherit; border: none;
-  padding: 0.4rem 0.8rem; cursor: pointer; opacity: 0.6;
-  border-bottom: 2px solid transparent; margin-bottom: -1px;
+@layer components {
+  .pill {
+    @apply inline-block rounded-full border border-current px-2 py-px;
+  }
+  .panel {
+    @apply w-full rounded border border-line bg-faint p-2.5 text-xs leading-5;
+  }
+  .tabs {
+    @apply mb-4 flex gap-2 border-b border-line;
+  }
+  .tabs button {
+    @apply -mb-px rounded-none border-0 border-b-2 border-transparent px-3 py-1.5 opacity-60;
+  }
+  .tabs button:hover {
+    @apply opacity-100;
+  }
+  .tabs button.active {
+    @apply border-current opacity-100;
+  }
+  .env-warning {
+    @apply my-2 rounded border border-warn px-3 py-2 text-warn;
+  }
 }
-.tabs button.active { opacity: 1; border-bottom-color: currentColor; }
-.tabs button:hover { opacity: 1; }
-
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { color: var(--muted); font-weight: normal; }
-
-.pill {
-  display: inline-block; padding: 0.05rem 0.5rem;
-  border-radius: 1rem; border: 1px solid currentColor;
-}
-.ok { color: var(--ok); }
-.warn { color: var(--warn); }
-.bad { color: var(--bad); }
-.muted { color: var(--muted); }
-
-.filters { display: flex; gap: 0.75rem; align-items: center; margin: 1rem 0; }
-.filters select {
-  font: inherit; background: none; color: inherit;
-  border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.4rem;
-}
-.filters label { color: var(--muted); }
-
-.error-cell { max-width: 24rem; overflow-wrap: break-word; }
-.empty { color: var(--muted); padding: 2rem 0; text-align: center; }
-code.hash { font-size: 12px; color: var(--muted); }
-
-button {
-  font: inherit; background: none; color: inherit; cursor: pointer;
-  border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.6rem;
-}
-button:hover:not(:disabled) { border-color: currentColor; }
-button:disabled { opacity: 0.4; cursor: default; }
-button.danger { color: var(--bad); }
-.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; }
-.tabs button.active { border-bottom-color: currentColor; }
-.ks-controls button { margin-left: 0.35rem; }
-
-h2 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
-
-.yaml-editor, .sample-editor, .preview-output, .validation-error {
-  width: 100%; box-sizing: border-box; font: 12px/1.5 inherit;
-  border: 1px solid var(--border); border-radius: 4px; padding: 0.6rem;
-  background: color-mix(in srgb, currentColor 4%, transparent);
-}
-.yaml-editor { min-height: 24rem; resize: vertical; }
-.sample-editor { min-height: 8rem; resize: vertical; }
-.preview-output, .validation-error { overflow-x: auto; white-space: pre; }

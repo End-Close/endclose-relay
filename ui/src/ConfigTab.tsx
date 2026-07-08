@@ -93,14 +93,14 @@ export default function ConfigTab() {
   const routeIds = validation?.routes ?? []
 
   return (
-    <div className="config-tab">
-      <p className="muted">
-        active config: <code className="hash">{activeHash.slice(0, 19)}…</code>
-        {dirty && <span className="warn"> (editor has unsaved changes)</span>}
+    <div>
+      <p className="text-dim">
+        active config: <code className="text-xs">{activeHash.slice(0, 19)}…</code>
+        {dirty && <span className="text-warn"> (editor has unsaved changes)</span>}
       </p>
 
       <textarea
-        className="yaml-editor"
+        className="panel min-h-96 resize-y"
         spellCheck={false}
         value={yaml}
         onChange={(e) => {
@@ -110,34 +110,34 @@ export default function ConfigTab() {
         }}
       />
 
-      <div className="filters">
+      <div className="my-4 flex items-center gap-3">
         <button onClick={onValidate}>validate</button>
         <button onClick={onSave} disabled={!dirty}>apply</button>
         <button onClick={download}>download yaml</button>
-        {saveMsg && <span className="muted">{saveMsg}</span>}
+        {saveMsg && <span className="text-dim">{saveMsg}</span>}
       </div>
 
       {validation &&
         (validation.valid ? (
-          <p className="ok">
+          <p className="text-ok">
             ✓ valid · hash {validation.hash?.slice(0, 19)}… · routes: {validation.routes?.join(', ')}
             <br />
-            <span className="muted">
+            <span className="text-dim">
               secrets:{' '}
               {validation.secret_envs?.map((s) => `${s.set ? '✓' : '○'} ${s.name}`).join('  ')}
             </span>
           </p>
         ) : (
-          <pre className="bad validation-error">{validation.error}</pre>
+          <pre className="panel overflow-x-auto whitespace-pre text-bad">{validation.error}</pre>
         ))}
 
       <h2>map preview</h2>
-      <p className="muted">
+      <p className="text-dim">
         Paste a sample webhook payload to see the exact record that would leave your network
         under the YAML above (saved or not). Runs locally; sends nothing.
       </p>
-      <div className="filters">
-        <label>
+      <div className="my-4 flex items-center gap-3">
+        <label className="text-dim">
           route{' '}
           <select value={previewRoute} onChange={(e) => setPreviewRoute(e.target.value)}>
             <option value="">choose…</option>
@@ -146,11 +146,11 @@ export default function ConfigTab() {
             ))}
           </select>
         </label>
-        {routeIds.length === 0 && <span className="muted">run validate to list routes</span>}
+        {routeIds.length === 0 && <span className="text-dim">run validate to list routes</span>}
         <button onClick={onPreview} disabled={!previewRoute || !sampleText}>preview</button>
       </div>
       <textarea
-        className="sample-editor"
+        className="panel min-h-32 resize-y"
         placeholder='{"Event": "TransferFunded", ...}'
         spellCheck={false}
         value={sampleText}
@@ -158,9 +158,9 @@ export default function ConfigTab() {
       />
       {preview &&
         (preview.error ? (
-          <pre className="bad validation-error">{preview.error}</pre>
+          <pre className="panel overflow-x-auto whitespace-pre text-bad">{preview.error}</pre>
         ) : (
-          <pre className="preview-output">{JSON.stringify(preview, null, 2)}</pre>
+          <pre className="panel overflow-x-auto whitespace-pre">{JSON.stringify(preview, null, 2)}</pre>
         ))}
 
       <h2>history</h2>
@@ -174,10 +174,10 @@ export default function ConfigTab() {
               <td>{v.id}</td>
               <td>{fmtAgo(v.applied_at)}</td>
               <td>{v.applied_by}</td>
-              <td><code className="hash">{v.config_hash.slice(0, 19)}…</code></td>
+              <td><code className="text-xs text-dim">{v.config_hash.slice(0, 19)}…</code></td>
               <td>
                 {v.config_hash === activeHash ? (
-                  <span className="pill ok">active</span>
+                  <span className="pill text-ok">active</span>
                 ) : (
                   <button onClick={() => restoreVersion(v.id)}>load</button>
                 )}

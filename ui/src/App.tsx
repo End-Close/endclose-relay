@@ -47,11 +47,11 @@ function KillswitchControls({ status, refresh }: { status: Status; refresh: () =
     refresh()
   }
   return (
-    <span className="ks-controls">
+    <span className="inline-flex items-center gap-1.5">
       {ks === 'none' ? (
-        <span className="pill ok">forwarding</span>
+        <span className="pill text-ok">forwarding</span>
       ) : (
-        <span className={`pill ${ks === 'panic' ? 'bad' : 'warn'}`}>killswitch: {ks}</span>
+        <span className={`pill ${ks === 'panic' ? 'text-bad' : 'text-warn'}`}>killswitch: {ks}</span>
       )}{' '}
       {ks === 'none' && (
         <>
@@ -59,7 +59,7 @@ function KillswitchControls({ status, refresh }: { status: Status; refresh: () =
             pause
           </button>
           <button
-            className="danger"
+            className="text-bad"
             onClick={() =>
               flip(
                 'panic',
@@ -96,10 +96,10 @@ function RoutesTable({ status, refresh }: { status: Status; refresh: () => void 
           <tr key={r.id}>
             <td>{r.id}</td>
             <td>{r.data_stream_key}</td>
-            <td>{r.paused ? <span className="warn">paused</span> : 'active'}</td>
+            <td>{r.paused ? <span className="text-warn">paused</span> : 'active'}</td>
             <td>{r.counts.pending ?? 0}</td>
             <td>{r.counts.retry ?? 0}</td>
-            <td className={r.counts.parked ? 'bad' : ''}>{r.counts.parked ?? 0}</td>
+            <td className={r.counts.parked ? 'text-bad' : ''}>{r.counts.parked ?? 0}</td>
             <td>{r.counts.delivered ?? 0}</td>
             <td>{r.oldest_pending_age_s == null ? '—' : fmtDuration(r.oldest_pending_age_s)}</td>
             <td title={fmtTime(r.last_delivered_at)}>{fmtAgo(r.last_delivered_at)}</td>
@@ -137,8 +137,8 @@ function EventsTab({ routes }: { routes: string[] }) {
   }
   return (
     <>
-      <div className="filters">
-        <label>
+      <div className="my-4 flex items-center gap-3">
+        <label className="text-dim">
           status{' '}
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
             {EVENT_STATUSES.map((s) => (
@@ -146,7 +146,7 @@ function EventsTab({ routes }: { routes: string[] }) {
             ))}
           </select>
         </label>
-        <label>
+        <label className="text-dim">
           route{' '}
           <select value={route} onChange={(e) => setRoute(e.target.value)}>
             <option value="">all</option>
@@ -158,7 +158,7 @@ function EventsTab({ routes }: { routes: string[] }) {
         {parkedCount > 0 && (
           <button onClick={replayParked}>replay all parked</button>
         )}
-        {error && <span className="bad">{error}</span>}
+        {error && <span className="text-bad">{error}</span>}
       </div>
       <table>
         <thead>
@@ -171,18 +171,18 @@ function EventsTab({ routes }: { routes: string[] }) {
           {(data ?? []).map((e: EventSummary) => (
             <tr key={e.id}>
               <td>{e.id}</td>
-              <td className={e.status === 'parked' ? 'bad' : e.status === 'retry' ? 'warn' : ''}>{e.status}</td>
+              <td className={e.status === 'parked' ? 'text-bad' : e.status === 'retry' ? 'text-warn' : ''}>{e.status}</td>
               <td>{e.route_id}</td>
               <td>{e.event_type ?? '?'}</td>
               <td title={fmtTime(e.received_at)}>{fmtAgo(e.received_at)}</td>
               <td>{e.attempts}</td>
-              <td className="error-cell muted">{e.last_error ?? ''}</td>
+              <td className="max-w-96 break-words text-dim">{e.last_error ?? ''}</td>
               <td>{e.status === 'parked' && <button onClick={() => replayOne(e.id)}>replay</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {data?.length === 0 && <div className="empty">no events match</div>}
+      {data?.length === 0 && <div className="py-8 text-center text-dim">no events match</div>}
     </>
   )
 }
@@ -199,9 +199,9 @@ function AuditTab() {
   }
   return (
     <>
-      <div className="filters">
+      <div className="my-4 flex items-center gap-3">
         <button onClick={download}>download jsonl</button>
-        {error && <span className="bad">{error}</span>}
+        {error && <span className="text-bad">{error}</span>}
       </div>
       <table>
         <thead>
@@ -213,12 +213,12 @@ function AuditTab() {
               <td title={fmtTime(a.at)}>{fmtAgo(a.at)}</td>
               <td>{a.actor}</td>
               <td>{a.action}</td>
-              <td className="muted">{a.detail_json}</td>
+              <td className="text-dim">{a.detail_json}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {data?.length === 0 && <div className="empty">no audit entries</div>}
+      {data?.length === 0 && <div className="py-8 text-center text-dim">no audit entries</div>}
     </>
   )
 }
@@ -234,16 +234,16 @@ export default function App() {
       <h1>
         endclose-relay <small>{status ? `v${status.version}` : ''}</small>
       </h1>
-      <p className="meta">
-        {error && <span className="bad">relay unreachable: {error}</span>}
+      <p className="mt-1 mb-4 text-dim">
+        {error && <span className="text-bad">relay unreachable: {error}</span>}
         {status && (
           <>
             uptime {fmtDuration(status.uptime_s)} · db {fmtBytes(status.storage.db_bytes)} · config{' '}
-            <code className="hash" title={status.config_hash ?? ''}>
+            <code className="text-xs" title={status.config_hash ?? ''}>
               {(status.config_hash ?? '?').slice(0, 19)}
             </code>
             {status.restart_pending && (
-              <span className="warn" title="Config changed since boot; non-route changes apply on restart">
+              <span className="text-warn" title="Config changed since boot; non-route changes apply on restart">
                 {' '}· restart pending
               </span>
             )}{' '}
@@ -251,6 +251,13 @@ export default function App() {
           </>
         )}
       </p>
+      {status && status.secret_envs.some((s) => !s.set) && (
+        <p className="env-warning">
+          ⚠ missing secrets:{' '}
+          {status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')} — the relay
+          cannot verify or forward without them. Set them in <code>.env</code> and restart.
+        </p>
+      )}
       <nav className="tabs">
         {TABS.map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>

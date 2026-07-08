@@ -87,9 +87,13 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     const current = deps.db
       .prepare('SELECT config_hash, applied_at FROM config_versions ORDER BY id DESC LIMIT 1')
       .get() as { config_hash: string; applied_at: string } | undefined
+    const activeConfig = getActiveConfig(deps.db)?.config
     return {
       version: VERSION,
       uptime_s: Math.round((now - deps.startedAt) / 1000),
+      // Boot check surfaced to the UI: secrets referenced by the active config (plus the
+      // appliance keys) and whether each is currently set in the environment.
+      secret_envs: activeConfig ? envStatus(activeConfig) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
       restart_pending: current !== undefined && current.config_hash !== deps.bootConfigHash,

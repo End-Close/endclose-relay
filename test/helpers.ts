@@ -65,6 +65,8 @@ routes:
 export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics: Metrics } {
   process.env.ENDCLOSE_API_KEY = 'test-api-key'
   process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer test-webhook-secret'
+  process.env.RELAY_DATA_KEY = 'test-data-key-0123456789'
+  process.env.MASKING_HMAC_KEY = 'test-masking-key-0123456789'
   const db = openDb(':memory:')
   migrate(db)
   saveConfig(db, TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort)), 'test')

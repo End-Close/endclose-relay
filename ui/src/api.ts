@@ -14,6 +14,7 @@ export interface RouteStatus {
 export interface Status {
   version: string
   uptime_s: number
+  secret_envs: { name: string; set: boolean }[]
   config_hash: string | null
   config_applied_at: string | null
   restart_pending: boolean
