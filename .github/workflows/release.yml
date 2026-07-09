@@ -24,13 +24,21 @@ jobs:
   release:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with the built-in GITHUB_TOKEN
     steps:
       - uses: actions/checkout@v5
-      - name: Tag must match package.json version
+      - name: Tag must match package.json and the quick-start compose image
         run: |
           PKG=$(node -p "require('./package.json').version")
           if [ "v$PKG" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match package.json v$PKG" >&2
+            exit 1
+          fi
+          # The quick-start compose pins the GHCR image; a stale pin ships silent drift.
+          if ! grep -q "ghcr.io/end-close/relay:$GITHUB_REF_NAME" docker-compose.yaml; then
+            echo "docker-compose.yaml image ref is not ghcr.io/end-close/relay:$GITHUB_REF_NAME — bump it with the version" >&2
             exit 1
           fi
       - uses: docker/setup-qemu-action@v3
@@ -44,12 +52,21 @@ jobs:
           # The same PAT authenticates the registry and the version-create API below.
           username: '-'
           password: ${{ secrets.DISTR_API_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.distr.sh/end-close/relay:${{ github.ref_name }} # immutable; no :latest
+          # One build, two registries: Distr (customer distribution channel) and GHCR
+          # (End Close's own copy: backup, manual-compose installs, provenance).
+          tags: | # immutable version tags; no :latest
+            registry.distr.sh/end-close/relay:${{ github.ref_name }}
+            ghcr.io/end-close/relay:${{ github.ref_name }}
       - name: Pin image version in the Distr compose file
         run: sed -i "s|relay:VERSION|relay:${GITHUB_REF_NAME}|" distr/docker-compose.yaml
       - uses: distr-sh/distr-create-version-action@v1
