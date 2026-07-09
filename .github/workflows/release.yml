@@ -54,7 +54,7 @@ jobs:
       - uses: distr-sh/distr-create-version-action@v1
         with:
           api-token: ${{ secrets.DISTR_API_TOKEN }}
-          application-id: ${{ vars.DISTR_APP_ID }}
+          application-id: ${{ vars.DISTR_APPLICATION_ID }}
           version-name: ${{ github.ref_name }}
           compose-file: distr/docker-compose.yaml
           template-file: distr/env-template.env
