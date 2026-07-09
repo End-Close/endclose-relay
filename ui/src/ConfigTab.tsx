@@ -49,7 +49,7 @@ export default function ConfigTab() {
   const [activeHash, setActiveHash] = useState('')
   const [dirty, setDirty] = useState(false)
   const [validation, setValidation] = useState<ValidationResult | null>(null)
-  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [saveMsg, setSaveMsg] = useState<{ text: string; error?: boolean } | null>(null)
   const [versions, setVersions] = useState<ConfigVersion[]>([])
   const [previewRoute, setPreviewRoute] = useState('')
   const [sampleText, setSampleText] = useState('')
@@ -94,7 +94,7 @@ export default function ConfigTab() {
       }
     }
     setRestarting(false)
-    setSaveMsg('relay did not come back within 60s — check `docker ps` on the host')
+    setSaveMsg({ text: 'relay did not come back within 60s — check the container on the host', error: true })
   }
 
   const onSave = async () => {
@@ -105,17 +105,18 @@ export default function ConfigTab() {
     try {
       const res = await saveConfig(yaml)
       if (res.restarting) {
-        setSaveMsg(`applied ${res.applied.slice(0, 19)}… — relay is restarting into running mode`)
+        setSaveMsg({ text: `applied ${res.applied.slice(0, 19)}… — relay is restarting into running mode` })
         void waitForRunning()
         return
       }
-      setSaveMsg(
-        `applied ${res.applied.slice(0, 19)}…` +
+      setSaveMsg({
+        text:
+          `applied ${res.applied.slice(0, 19)}…` +
           (res.restart_pending ? ' — non-route changes need a container restart' : ''),
-      )
+      })
       reload()
     } catch (err) {
-      setSaveMsg(`save failed: ${(err as Error).message}`)
+      setSaveMsg({ text: `save failed: ${(err as Error).message}`, error: true })
     }
   }
 
@@ -139,7 +140,7 @@ export default function ConfigTab() {
     setYaml(v.config_yaml)
     setDirty(true)
     setValidation(null)
-    setSaveMsg(`loaded version #${id} into the editor — review and Apply to restore`)
+    setSaveMsg({ text: `loaded version #${id} into the editor — review and Apply to restore` })
   }
 
   const download = () => {
@@ -184,7 +185,9 @@ export default function ConfigTab() {
         <button onClick={onValidate}>validate</button>
         <button onClick={onSave} disabled={!dirty}>apply</button>
         <button onClick={download}>download yaml</button>
-        {saveMsg && <span className="text-dim">{saveMsg}</span>}
+        {saveMsg && (
+          <span className={saveMsg.error ? 'font-bold text-bad' : 'text-dim'}>{saveMsg.text}</span>
+        )}
       </div>
 
       {validation &&
@@ -194,7 +197,11 @@ export default function ConfigTab() {
             <br />
             <span className="text-dim">
               secrets:{' '}
-              {validation.secret_envs?.map((s) => `${s.set ? '✓' : '○'} ${s.name}`).join('  ')}
+              {validation.secret_envs?.map((s) => (
+                <span key={s.name} className={s.set ? '' : 'mr-2 font-bold text-bad'}>
+                  {s.set ? `✓ ${s.name}` : `✗ ${s.name} (unset)`}{' '}
+                </span>
+              ))}
             </span>
           </p>
         ) : (

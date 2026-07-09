@@ -16,6 +16,23 @@ import { fmtAgo, fmtBytes, fmtDuration, fmtTime } from './format.js'
 
 const REFRESH_MS = 5000
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className="px-1.5 py-0 text-xs"
+      title={`copy ${text}`}
+      onClick={() => {
+        void navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      {copied ? 'copied ✓' : 'copy'}
+    </button>
+  )
+}
+
 /** Poll a fetcher while its consumer is mounted; null until the first response. */
 function usePolled<T>(fetcher: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; refresh: () => void } {
   const [data, setData] = useState<T | null>(null)
@@ -94,7 +111,13 @@ function RoutesTable({ status, refresh }: { status: Status; refresh: () => void 
       <tbody>
         {status.routes.map((r) => (
           <tr key={r.id}>
-            <td>{r.id}</td>
+            <td>
+              {r.id}
+              <span className="mt-0.5 flex items-center gap-1.5 text-xs text-dim">
+                <code>/ingest/{r.id}</code>
+                <CopyButton text={`/ingest/${r.id}`} />
+              </span>
+            </td>
             <td>{r.data_stream_key}</td>
             <td>{r.paused ? <span className="text-warn">paused</span> : 'active'}</td>
             <td>{r.counts.pending ?? 0}</td>
