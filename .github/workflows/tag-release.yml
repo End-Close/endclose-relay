@@ -23,8 +23,8 @@ jobs:
             echo "tag $VERSION already exists — nothing to do"
             exit 0
           fi
-          git config user.name "endclose-release"
-          git config user.email "ops@endclose.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$VERSION" -m "Release $VERSION"
           git push origin "$VERSION"
           echo "pushed $VERSION — release.yml takes it from here"
