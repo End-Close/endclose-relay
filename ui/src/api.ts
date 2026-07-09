@@ -22,7 +22,7 @@ export interface Status {
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]
-  storage: { db_path: string; db_bytes: number }
+  storage: { db_path: string; db_bytes: number; persistent: boolean | null }
 }
 
 export interface EventSummary {

@@ -235,6 +235,16 @@ export default function App() {
         <h1>
           endclose-relay <small>v{status.version} — setup</small>
         </h1>
+        {status.storage.persistent === false && (
+          <p className="env-warning">
+            <strong>⚠ No persistent volume detected</strong> — the data directory (
+            <code>{status.storage.db_path}</code>) is on the container's ephemeral
+            filesystem. Applying a configuration restarts the relay, and{' '}
+            <strong>everything will be lost, landing you back on this screen</strong>.
+            Attach a volume at that path (Docker volume / Kubernetes PersistentVolume)
+            and redeploy before configuring.
+          </p>
+        )}
         <p className="env-warning">
           The relay is not configured yet. Paste your initial configuration below, use
           validate + map preview with a sample payload, then apply — the relay restarts
@@ -273,6 +283,14 @@ export default function App() {
           </>
         )}
       </p>
+      {status && status.storage.persistent === false && (
+        <p className="env-warning">
+          ⚠ no persistent volume: <code>{status.storage.db_path}</code> is on the
+          container's ephemeral filesystem — configuration, buffered events, and audit
+          history <strong>will be lost on the next restart</strong>. Attach a volume at
+          that path.
+        </p>
+      )}
       {status && status.secret_envs.some((s) => !s.set) && (
         <p className="env-warning">
           ⚠ missing secrets:{' '}
