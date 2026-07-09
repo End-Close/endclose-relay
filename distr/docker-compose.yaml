@@ -1,0 +1,54 @@
+# endclose-relay — compose file delivered to customer hosts via Distr.
+#
+# Pre-deploy, once, on the host:
+#   docker volume create endclose-relay-data
+# (The volume is `external` so a Distr undeploy — which runs `compose down --volumes` —
+# preserves your configuration, audit log, and buffered events. Deleting data is a
+# separate, explicit `docker volume rm endclose-relay-data`.)
+#
+# Secrets: by default the five secret values are entered in your Distr Customer Portal
+# (write-only Distr Secrets, referenced by the env template). Strict mode — if your
+# policy forbids secrets on third-party infrastructure — put them in
+# /etc/endclose-relay/relay.env on the host (mode 600) and set
+# RELAY_SECRETS_FILE=/host-config/relay.env in the deployment env instead.
+#
+# First boot: the relay starts in bootstrap mode — open the admin UI on the host
+# (http://127.0.0.1:8081, basic auth) and apply the initial configuration; the relay
+# restarts itself into running mode. See docs/ONBOARDING.md.
+services:
+  relay:
+    image: registry.distr.sh/end-close/relay:VERSION # pinned by the release workflow
+    restart: unless-stopped # also completes the first-boot bootstrap (exit 0 -> restart)
+    ports:
+      - "8443:8443" # webhook ingest — front with your own TLS terminator / LB
+      - "127.0.0.1:8081:8081" # admin UI/API (basic auth) — host-loopback only
+      # - "9090:9090" # optional: Prometheus metrics + readiness for your monitoring
+    environment:
+      ENDCLOSE_API_KEY: ${ENDCLOSE_API_KEY:-}
+      PAYABLI_WEBHOOK_SECRET: ${PAYABLI_WEBHOOK_SECRET:-}
+      RELAY_DATA_KEY: ${RELAY_DATA_KEY:-}
+      MASKING_HMAC_KEY: ${MASKING_HMAC_KEY:-}
+      ADMIN_BASIC_AUTH: ${ADMIN_BASIC_AUTH:-}
+      RELAY_SECRETS_FILE: ${RELAY_SECRETS_FILE:-}
+    volumes:
+      # Strict-mode secrets: the host dir is mounted read-only whether or not it's used
+      # (a directory mount is auto-created if absent and harmless when empty).
+      - /etc/endclose-relay:/host-config:ro
+      - relay-data:/var/lib/endclose-relay
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # Admin plane answers in every mode (setup/bootstrap/running); Distr status and
+      # the autoheal sidecar key off this — it must not fail while unconfigured.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:
+    external: true # survives `compose down --volumes` (Distr undeploy)
+    name: endclose-relay-data

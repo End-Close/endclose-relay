@@ -25,5 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # Build only — publishing/signing is the release pipeline, which lands later.
+      # Build only — publishing happens in the release workflow on tags.
       - run: docker build -t endclose-relay:ci .
+      # The compose file delivered via Distr must stay structurally valid.
+      - run: docker compose -f distr/docker-compose.yaml config -q

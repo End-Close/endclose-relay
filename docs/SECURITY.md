@@ -87,10 +87,19 @@ static setup page on `:8081` naming the offending variable names and answers eve
 else with 503. That page is intentionally unauthenticated: it exists precisely because
 the admin credential may be the thing that's missing, it appears only while the relay
 holds no data and accepts no webhooks, and it discloses nothing but env-var names.
+- **Bootstrap mode:** with env present but no configuration yet (fresh appliance, no
+seed file), the relay serves only the **authenticated** admin UI in a setup state where
+the initial configuration is entered; ingest is not listening and no webhooks are
+accepted, so there is still no data at risk. After the first apply the process restarts
+itself into normal operation. In both modes `GET /healthz` (unauthenticated liveness,
+disclosing only `{ ok, mode }`) reports healthy — deliberately, so fleet-management
+auto-restart never fights an operator mid-configuration.
 - **Metrics** `:9090`**:** not published by default. If you opt in, it exposes operational
 counters only (no payload data), with optional basic auth (`METRICS_BASIC_AUTH`).
 - **Egress allowlist for your firewall:** `api.endclose.com:443`, plus your image
-registry for pulls. Nothing else. No telemetry, no phone-home.
+registry for pulls. For Distr-managed deployments add `app.distr.sh:443` (agent
+polling — outbound only) and `registry.distr.sh:443` (image pulls). Nothing else. No
+telemetry, no phone-home from the relay itself.
 
 
 
@@ -113,13 +122,53 @@ and never silently dropped.
 All secrets enter as environment variables on the relay container, provided through
 whatever secret-management mechanism you already use: the End Close API key, processor
 webhook secrets, and the two appliance keys. Configuration references secrets **by
-env-var name only** — it contains no secret material and is safe to keep in your git. Secrets are never written to the database, the logs, or the audit
+env-var name only** — it contains no secret material and is safe to keep in your git. Secrets are never written to the relay's database, logs, or audit
 log. The logging layer only accepts scalar metadata by construction — there is no API
 for logging a payload. Missing secrets degrade safely: the UI banners any
 config-referenced secret that isn't set, and a missing End Close API key means events
 buffer locally without forwarding — nothing is lost and nothing falls open.
 
-## Configuration provenance
+**The claim we make: secrets are never accessible to End Close.** They are not
+transmitted to End Close, not stored server-side by End Close, and no End Close-facing
+surface (records, admin API, dashboards) can return them. Under Distr-managed
+deployments (below) there are two ways to provide them, with an explicit trade-off:
+
+- **Default — Distr Secrets:** you enter the five values in *your* Distr Customer
+  Portal; they are write-only after creation (no API or UI ever returns a value; logs
+  redact them) and referenced from the deployment's env template. Honest caveat, stated
+  plainly: those values are stored in the Distr hub's database, operated by Glasskube
+  on Distr's SaaS — a third party you already trust with more (see the agent note in
+  the fleet-management section).
+- **Strict mode — host file:** if your policy forbids secrets on third-party
+  infrastructure, put the five variables in `/etc/endclose-relay/relay.env` on the host
+  (mode 600) and set `RELAY_SECRETS_FILE=/host-config/relay.env` in the deployment env.
+  The relay parses the file at boot (values fill unset/blank env vars; names, never
+  values, are logged). In this mode secrets exist only on your host, and
+  `MASKING_HMAC_KEY` / `RELAY_DATA_KEY` never leave it.
+
+## Fleet management (Distr)
+
+Distr-managed deployments (the recommended install) add one component to your host: the
+**Distr agent**, an open-source (Apache-2.0) container by Glasskube that polls
+`app.distr.sh` outbound-only (~5s), deploys/updates the relay's compose stack, and
+reports deployment status. Review items, stated plainly:
+
+- **The agent mounts the host's Docker socket — root-equivalent on that host — and
+  self-updates from the hub.** This is inherent to what it does (it installs and
+  upgrades containers). Practical consequence: Glasskube's supply chain is in your
+  trust boundary for that host, which is also why refusing Distr Secrets while running
+  the agent buys less than it appears to (strict mode exists for policy compliance
+  regardless). The agent's source is public and auditable.
+- **Updates are pull-based and approved by you** in your Distr portal (End Close
+  publishes versions; nothing auto-rolls). Undeploying via Distr tears down the
+  containers but **preserves the data volume** (it is `external`); destroying data is a
+  separate explicit `docker volume rm` on the host.
+- **The Distr dashboard can show container logs** (a per-deployment toggle you
+  control). The relay's logging layer is scalar-metadata-only by construction, so no
+  payload data can appear there; disable the toggle if you want End Close to see only
+  status and versions.
+- The relay itself is unchanged by Distr: same image, same ports, same admin plane
+  reachable only from your host.
 
 The appliance database is the configuration's source of truth. Every applied config is
 an **immutable version row** — full YAML, SHA-256 hash, timestamp — and the history is

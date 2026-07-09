@@ -39,7 +39,9 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8443/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      # Targets the admin plane, which answers in every mode (setup/bootstrap/running) —
+      # a fleet manager's autoheal must not restart the relay while it's being configured.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3

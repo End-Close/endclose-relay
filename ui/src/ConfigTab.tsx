@@ -3,6 +3,7 @@ import {
   fetchConfig,
   fetchConfigVersion,
   fetchConfigVersions,
+  fetchStatus,
   previewConfig,
   saveConfig,
   validateConfig,
@@ -11,6 +12,33 @@ import {
   type ValidationResult,
 } from './api.js'
 import { fmtAgo } from './format.js'
+
+// Editor starter for a fresh appliance (bootstrap mode) — a commented skeleton, not a
+// working config: every value below is customer-specific and reviewed with End Close.
+const STARTER_YAML = `# endclose-relay configuration — see docs/CONFIG.md for the full reference.
+endclose:
+  base_url: https://api.endclose.com/v1
+  api_key_env: ENDCLOSE_API_KEY
+
+routes:
+  - id: payabli-settlements
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+      allowed_ips: ["54.166.54.170"] # Payabli production (sandbox: 52.3.204.115)
+    events: ["TransferFunded"]
+    map:
+      data_stream_key: payabli_settlements_funded
+      external_id: transferId
+      amount: NetAmount
+      direction: credit
+      date: { source: transferTime, format: mdy_hms }
+      metadata:
+        batch_id: batchId
+        batch_number: batchNumber
+`
 
 // Declarative config, DB-authoritative: this tab edits the YAML, validates against the
 // schema, previews the exact outbound record for a sample payload, and saves a new
@@ -26,20 +54,48 @@ export default function ConfigTab() {
   const [previewRoute, setPreviewRoute] = useState('')
   const [sampleText, setSampleText] = useState('')
   const [preview, setPreview] = useState<PreviewResult | null>(null)
+  const [restarting, setRestarting] = useState(false)
 
   const reload = () => {
-    fetchConfig().then((c) => {
-      setYaml(c.yaml)
-      setActiveHash(c.hash)
-      setDirty(false)
-      setValidation(null)
-      setSaveMsg(null)
-    })
-    fetchConfigVersions().then(setVersions)
+    fetchConfig().then(
+      (c) => {
+        setYaml(c.yaml)
+        setActiveHash(c.hash)
+        setDirty(false)
+        setValidation(null)
+        setSaveMsg(null)
+      },
+      () => {
+        // No config yet (bootstrap mode): start the editor from the skeleton.
+        setYaml((prev) => prev || STARTER_YAML)
+        setActiveHash('')
+        setDirty(true)
+      },
+    )
+    fetchConfigVersions().then(setVersions, () => setVersions([]))
   }
   useEffect(reload, [])
 
   const onValidate = async () => setValidation(await validateConfig(yaml))
+
+  /** After a bootstrap apply the process restarts itself; poll until it's back. */
+  const waitForRunning = async () => {
+    setRestarting(true)
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 1000))
+      try {
+        const s = await fetchStatus()
+        if (s.mode === 'running') {
+          location.reload()
+          return
+        }
+      } catch {
+        // process is down mid-restart — keep polling
+      }
+    }
+    setRestarting(false)
+    setSaveMsg('relay did not come back within 60s — check `docker ps` on the host')
+  }
 
   const onSave = async () => {
     const v = await validateConfig(yaml)
@@ -48,6 +104,11 @@ export default function ConfigTab() {
     if (!confirm('Apply this configuration? Route changes take effect immediately.')) return
     try {
       const res = await saveConfig(yaml)
+      if (res.restarting) {
+        setSaveMsg(`applied ${res.applied.slice(0, 19)}… — relay is restarting into running mode`)
+        void waitForRunning()
+        return
+      }
       setSaveMsg(
         `applied ${res.applied.slice(0, 19)}…` +
           (res.restart_pending ? ' — non-route changes need a container restart' : ''),
@@ -92,10 +153,19 @@ export default function ConfigTab() {
 
   const routeIds = validation?.routes ?? []
 
+  if (restarting) {
+    return (
+      <p className="my-8 text-center text-warn">
+        configuration applied — the relay is restarting into running mode…
+      </p>
+    )
+  }
+
   return (
     <div>
       <p className="text-dim">
-        active config: <code className="text-xs">{activeHash.slice(0, 19)}…</code>
+        active config:{' '}
+        <code className="text-xs">{activeHash ? `${activeHash.slice(0, 19)}…` : '(none yet)'}</code>
         {dirty && <span className="text-warn"> (editor has unsaved changes)</span>}
       </p>
 
