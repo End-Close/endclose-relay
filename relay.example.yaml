@@ -28,14 +28,9 @@
 # never sees raw). Preview any route locally with:
 #   relayctl map preview --route <id> --sample <payload.json>
 
-endclose:
-  base_url: https://api.endclose.com/v1
-  api_key_env: ENDCLOSE_API_KEY
-
-ingest:
-  port: 8443
-  host: 0.0.0.0
-
+# This document is ROUTES ONLY. The End Close endpoint, listener ports, and tuning are
+# environment settings with sensible defaults (override e.g. ENDCLOSE_BASE_URL for
+# staging) — see docs/CONFIG.md.
 routes:
   # ── Payabli: settlement funded ──────────────────────────────────────────────
   # Payabli notification: payout_batch_settlement_funded  (payload Event: TransferFunded)

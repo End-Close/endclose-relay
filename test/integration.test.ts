@@ -8,7 +8,7 @@ import { Dispatcher } from '../src/forward/dispatcher.js'
 import { EndCloseClient } from '../src/forward/endclose-client.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
-import { DATA_KEY, FIXTURES, MASKING_KEY, setupDb, testConfig } from './helpers.js'
+import { DATA_KEY, FIXTURES, MASKING_KEY, setupDb, testSettings } from './helpers.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
 const batchPaidBody = readFileSync(join(FIXTURES, 'payabli-batch-paid.json'))
@@ -94,11 +94,10 @@ describe('ingest → store → forward', () => {
     const setup = setupDb(port)
     db = setup.db
     events = new EventsRepo(db)
-    const config = testConfig(port)
     const client = new EndCloseClient(`http://127.0.0.1:${port}/v1`, 'test-api-key')
     dispatcher = new Dispatcher({
       db,
-      config,
+      settings: testSettings(),
       client,
       dataKey: DATA_KEY,
       maskingKey: MASKING_KEY,

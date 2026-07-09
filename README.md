@@ -51,7 +51,7 @@ Prometheus metrics + `/healthz` `/readyz` probes are at `:9090` (optional basic 
 `relay_delivery_lag_seconds`, `relay_killswitch_state`, `relay_db_bytes`.
 
 Retention: payloads of delivered/filtered events are wiped after 7 days and their rows
-(the idempotency ledger) deleted after 30 (`retention:` in the config). Parked events are
+(the idempotency ledger) deleted after 30 (`RELAY_RETENTION_*` env). Parked events are
 kept until replayed — never silently dropped.
 
 ## Documentation

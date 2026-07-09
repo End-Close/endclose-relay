@@ -297,12 +297,7 @@ export default function App() {
             <code className="text-xs" title={status.config_hash ?? ''}>
               {(status.config_hash ?? '?').slice(0, 19)}
             </code>
-            {status.restart_pending && (
-              <span className="text-warn" title="Config changed since boot; non-route changes apply on restart">
-                {' '}· restart pending
-              </span>
-            )}{' '}
-            · <KillswitchControls status={status} refresh={refresh} />
+            {' '}· <KillswitchControls status={status} refresh={refresh} />
           </>
         )}
       </p>

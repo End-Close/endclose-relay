@@ -15,11 +15,8 @@ import { fmtAgo } from './format.js'
 
 // Editor starter for a fresh appliance (bootstrap mode) — a commented skeleton, not a
 // working config: every value below is customer-specific and reviewed with End Close.
-const STARTER_YAML = `# endclose-relay configuration — see docs/CONFIG.md for the full reference.
-endclose:
-  base_url: https://api.endclose.com/v1
-  api_key_env: ENDCLOSE_API_KEY
-
+const STARTER_YAML = `# endclose-relay configuration — routes only; see docs/CONFIG.md.
+# (The End Close endpoint, ports, and tuning are environment settings, not config.)
 routes:
   - id: payabli-settlements
     source: payabli
@@ -111,8 +108,8 @@ export default function ConfigTab() {
       }
       setSaveMsg({
         text:
-          `applied ${res.applied.slice(0, 19)}…` +
-          (res.restart_pending ? ' — non-route changes need a container restart' : ''),
+          `applied ${res.applied.slice(0, 19)}… — live` +
+          (res.warnings?.length ? ` (${res.warnings.join('; ')})` : ''),
       })
       reload()
     } catch (err) {
@@ -195,6 +192,9 @@ export default function ConfigTab() {
           <p className="text-ok">
             ✓ valid · hash {validation.hash?.slice(0, 19)}… · routes: {validation.routes?.join(', ')}
             <br />
+            {validation.warnings?.map((w) => (
+              <span key={w} className="block text-warn">⚠ {w}</span>
+            ))}
             <span className="text-dim">
               secrets:{' '}
               {validation.secret_envs?.map((s) => (

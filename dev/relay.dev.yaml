@@ -2,17 +2,6 @@
 # only when ./data/dev.db is empty — `rm -rf data/` to reseed after editing this file,
 # or edit config in the admin UI like a customer would. No IP allowlists so you can
 # curl from localhost.
-endclose:
-  base_url: http://127.0.0.1:4100/v1
-  api_key_env: ENDCLOSE_API_KEY
-
-ingest:
-  port: 8443
-  host: 127.0.0.1
-
-admin:
-  host: 127.0.0.1
-
 routes:
   - id: payabli-settlements
     source: payabli

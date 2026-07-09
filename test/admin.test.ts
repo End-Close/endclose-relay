@@ -6,7 +6,6 @@ import { buildIngestServer } from '../src/ingest/server.js'
 import { buildMetricsServer } from '../src/metrics/server.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
-import { getActiveConfig } from '../src/config/store.js'
 import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
 import type { Metrics } from '../src/metrics/metrics.js'
 
@@ -28,7 +27,6 @@ describe('admin API', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
-      bootConfigHash: getActiveConfig(setup.db)!.hash,
     })
     ingest = buildIngestServer({
       db: setup.db,
@@ -94,7 +92,6 @@ describe('admin API', () => {
     const res = await get('/status')
     const s = res.json()
     expect(s.config_hash).toMatch(/^sha256:/)
-    expect(s.restart_pending).toBe(false)
     // boot-check surface for the UI banner: all secrets set in the test env
     expect(s.secret_envs.length).toBeGreaterThan(0)
     expect(s.secret_envs.every((e: any) => e.set)).toBe(true)
@@ -161,7 +158,6 @@ describe('admin API', () => {
       const edited = (before.yaml as string).replace('id: payabli-batches', 'id: payabli-batches-v2')
       const res = await post('/config', { yaml: edited })
       expect(res.statusCode).toBe(200)
-      expect(res.json().restart_pending).toBe(true) // hash differs from boot
 
       // route change took effect live: new route exists, old one is gone
       const status = (await get('/status')).json()
@@ -233,7 +229,6 @@ describe('bootstrap mode', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
-      bootConfigHash: '',
       mode: 'bootstrap',
       onBootstrapApplied: () => applied++,
     })
@@ -271,7 +266,6 @@ describe('bootstrap mode', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
-      bootConfigHash: getActiveConfig(setup.db)!.hash,
     })
     await admin.ready()
     expect((await admin.inject({ method: 'GET', url: '/healthz' })).json()).toEqual({

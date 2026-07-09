@@ -16,13 +16,6 @@ export const DATA_KEY = deriveKey('RELAY_DATA_KEY', 'test-data-key-0123456789')
 export const MASKING_KEY = deriveKey('MASKING_HMAC_KEY', 'test-masking-key-0123456789')
 
 export const TEST_CONFIG_YAML = `
-endclose:
-  base_url: http://127.0.0.1:__EC_PORT__/v1
-  api_key_env: ENDCLOSE_API_KEY
-dispatch:
-  poll_interval_ms: 50
-  backoff_base_ms: 20
-  backoff_cap_ms: 200
 routes:
   - id: payabli-settlements
     source: payabli
@@ -82,4 +75,18 @@ export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics:
 
 export function testConfig(ecPort = 9999) {
   return parseConfig(TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort))).config
+}
+
+/** Fast dispatch/retention settings for tests (poll 50ms, backoff 20→200ms). */
+export function testSettings() {
+  return {
+    dispatch: {
+      batch_max: 100,
+      poll_interval_ms: 50,
+      backoff_base_ms: 20,
+      backoff_cap_ms: 200,
+      park_after_ms: 7 * 24 * 3600 * 1000,
+    },
+    retention: { delivered_days: 7, ledger_days: 30 },
+  }
 }

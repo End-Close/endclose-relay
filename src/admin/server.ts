@@ -35,7 +35,6 @@ export interface AdminDeps {
   /** "user:password" — required. */
   basicAuth: string
   maskingKey: Buffer
-  bootConfigHash: string
   /** 'bootstrap' = no config yet: UI shows the setup editor; ingest is not running. */
   mode?: 'bootstrap' | 'running'
   /** Called once after the first successful config apply in bootstrap mode. */
@@ -111,7 +110,6 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       secret_envs: activeConfig ? envStatus(activeConfig) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
-      restart_pending: current !== undefined && current.config_hash !== deps.bootConfigHash,
       killswitch: {
         global: kv.globalKillswitch(),
         routes_paused: routes
@@ -208,6 +206,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
         hash: loaded.hash,
         routes: loaded.config.routes.map((r) => r.id),
         secret_envs: envStatus(loaded.config),
+        warnings: loaded.warnings,
       }
     } catch (err) {
       return { valid: false, error: (err as Error).message }
@@ -227,13 +226,10 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       // First config: the process restarts itself (compose restart policy brings it
       // back through the normal boot path) rather than half-starting services here.
       deps.onBootstrapApplied?.()
-      return { applied: loaded.hash, restart_pending: false, restarting: true }
+      return { applied: loaded.hash, restarting: true, warnings: loaded.warnings }
     }
-    return {
-      applied: loaded.hash,
-      // Route changes apply live; ports/endclose/dispatch changes need a restart.
-      restart_pending: loaded.hash !== deps.bootConfigHash,
-    }
+    // The config is routes-only and routes are read live — every apply is fully active.
+    return { applied: loaded.hash, warnings: loaded.warnings }
   })
 
   // Preview a route's mapping against a sample payload — works on DRAFT yaml so the
@@ -275,11 +271,12 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   return app
 }
 
-function envStatus(config: { endclose: { api_key_env: string }; routes: { auth: { secret_env: string } }[] }) {
+function envStatus(config: { routes: { auth: { secret_env: string } }[] }) {
   const names = [
     'RELAY_DATA_KEY',
     'MASKING_HMAC_KEY',
-    ...new Set([config.endclose.api_key_env, ...config.routes.map((r) => r.auth.secret_env)]),
+    'ENDCLOSE_API_KEY',
+    ...new Set(config.routes.map((r) => r.auth.secret_env)),
   ]
   return names.map((name) => ({ name, set: Boolean(process.env[name]) }))
 }

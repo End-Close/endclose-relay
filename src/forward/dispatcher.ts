@@ -1,6 +1,6 @@
 import type { EventEmitter } from 'node:events'
 import type { Db } from '../db/db.js'
-import type { RelayConfig } from '../config/schema.js'
+import type { RuntimeSettings } from '../config/runtime.js'
 import { EventsRepo, type EventRow } from '../db/repo/events.js'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { KvRepo } from '../db/repo/kv.js'
@@ -23,7 +23,7 @@ const RESULT_POLL_DELAY_MS = 1000
 
 export interface DispatcherDeps {
   db: Db
-  config: RelayConfig
+  settings: Pick<RuntimeSettings, 'dispatch' | 'retention'>
   client: EndCloseClient
   dataKey: Buffer
   maskingKey: Buffer
@@ -55,7 +55,7 @@ export class Dispatcher {
     if (recovered > 0) log.info('recovered in-flight events after restart', { count: recovered })
 
     this.deps.signal.on('event', () => this.wake())
-    this.timer = setInterval(() => this.wake(), this.deps.config.dispatch.poll_interval_ms)
+    this.timer = setInterval(() => this.wake(), this.deps.settings.dispatch.poll_interval_ms)
     this.wake()
   }
 
@@ -87,7 +87,7 @@ export class Dispatcher {
     const now = new Date().toISOString()
     if (Date.now() - this.lastPruneAt > PRUNE_INTERVAL_MS) {
       this.lastPruneAt = Date.now()
-      const { retention } = this.deps.config
+      const { retention } = this.deps.settings
       const { wiped, deleted } = this.events.prune(now, retention.delivered_days, retention.ledger_days)
       this.deps.metrics.pruned('wiped', wiped)
       this.deps.metrics.pruned('deleted', deleted)
@@ -96,7 +96,7 @@ export class Dispatcher {
 
     if (this.kv.globalKillswitch() !== 'none') return // pause/panic: buffer, do not forward
 
-    this.events.parkExpired(now, this.deps.config.dispatch.park_after_ms)
+    this.events.parkExpired(now, this.deps.settings.dispatch.park_after_ms)
 
     for (const routeId of this.events.routesWithDueEvents(now)) {
       if (!this.running) return
@@ -104,7 +104,7 @@ export class Dispatcher {
       const route = this.routes.get(routeId)
       if (!route) continue
 
-      const claimed = this.events.claimDue(routeId, now, this.deps.config.dispatch.batch_max)
+      const claimed = this.events.claimDue(routeId, now, this.deps.settings.dispatch.batch_max)
       if (claimed.length === 0) continue
       await this.deliverBatch(route.id, claimed)
     }
@@ -156,8 +156,8 @@ export class Dispatcher {
         const maxAttempts = Math.max(...mapped.map((e) => e.attempts))
         const next = nextAttemptAt(
           maxAttempts,
-          this.deps.config.dispatch.backoff_base_ms,
-          this.deps.config.dispatch.backoff_cap_ms,
+          this.deps.settings.dispatch.backoff_base_ms,
+          this.deps.settings.dispatch.backoff_cap_ms,
         )
         this.events.markFailed(ids, next, (err as Error).message)
         this.deps.metrics.forward(routeId, 'retried', ids.length)
