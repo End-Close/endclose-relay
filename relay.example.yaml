@@ -16,6 +16,8 @@
 #   RELAY_DATA_KEY          32+ chars; encrypts buffered payloads at rest (AES-256-GCM)
 #   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` transform.
 #                           Never leaves this appliance.
+#                           Generate each with e.g. `openssl rand -hex 32` (distinct
+#                           values!) and back them up — data is unreadable without them.
 #   ADMIN_BASIC_AUTH        user:password protecting the admin UI/API (required)
 #
 # The `map` block of each route is the complete answer to "what leaves our network":
