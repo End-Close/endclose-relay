@@ -38,8 +38,12 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: registry.distr.sh
-          username: ${{ vars.DISTR_REGISTRY_USER }}
-          password: ${{ secrets.DISTR_REGISTRY_TOKEN }}
+          # Distr registry auth: "No username is required, the PAT is linked directly to
+          # your user account" — the username is the literal placeholder '-'.
+          # https://distr.sh/docs/registry/configuration/
+          # The same PAT authenticates the registry and the version-create API below.
+          username: '-'
+          password: ${{ secrets.DISTR_API_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -51,7 +55,7 @@ jobs:
       - uses: distr-sh/distr-create-version-action@v1
         with:
           api-token: ${{ secrets.DISTR_API_TOKEN }}
-          application-id: ${{ vars.DISTR_APP_ID }}
+          application-id: ${{ vars.DISTR_APPLICATION_ID }}
           version-name: ${{ github.ref_name }}
           compose-file: distr/docker-compose.yaml
           template-file: distr/env-template.env
