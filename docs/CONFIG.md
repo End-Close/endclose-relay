@@ -17,8 +17,8 @@ it applies live** on apply; there is no restart-pending state. Anything boot-tim
 (endpoints, ports, tuning) is an environment setting instead: mixing the two in one
 editable document is how "I changed it in the UI but nothing happened" incidents occur.
 
-Legacy configs containing the old sections (`endclose`, `ingest`, …) still parse — the
-sections are ignored with a warning shown by validate/apply.
+The schema is strict: unknown top-level keys are rejected at validation, so a setting
+can never sit in the document silently doing nothing.
 
 ## Environment settings
 

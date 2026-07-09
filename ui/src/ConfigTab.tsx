@@ -106,11 +106,7 @@ export default function ConfigTab() {
         void waitForRunning()
         return
       }
-      setSaveMsg({
-        text:
-          `applied ${res.applied.slice(0, 19)}… — live` +
-          (res.warnings?.length ? ` (${res.warnings.join('; ')})` : ''),
-      })
+      setSaveMsg({ text: `applied ${res.applied.slice(0, 19)}… — live` })
       reload()
     } catch (err) {
       setSaveMsg({ text: `save failed: ${(err as Error).message}`, error: true })
@@ -192,9 +188,6 @@ export default function ConfigTab() {
           <p className="text-ok">
             ✓ valid · hash {validation.hash?.slice(0, 19)}… · routes: {validation.routes?.join(', ')}
             <br />
-            {validation.warnings?.map((w) => (
-              <span key={w} className="block text-warn">⚠ {w}</span>
-            ))}
             <span className="text-dim">
               secrets:{' '}
               {validation.secret_envs?.map((s) => (

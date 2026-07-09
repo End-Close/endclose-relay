@@ -206,7 +206,6 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
         hash: loaded.hash,
         routes: loaded.config.routes.map((r) => r.id),
         secret_envs: envStatus(loaded.config),
-        warnings: loaded.warnings,
       }
     } catch (err) {
       return { valid: false, error: (err as Error).message }
@@ -226,10 +225,10 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       // First config: the process restarts itself (compose restart policy brings it
       // back through the normal boot path) rather than half-starting services here.
       deps.onBootstrapApplied?.()
-      return { applied: loaded.hash, restarting: true, warnings: loaded.warnings }
+      return { applied: loaded.hash, restarting: true }
     }
     // The config is routes-only and routes are read live — every apply is fully active.
-    return { applied: loaded.hash, warnings: loaded.warnings }
+    return { applied: loaded.hash }
   })
 
   // Preview a route's mapping against a sample payload — works on DRAFT yaml so the

@@ -119,7 +119,6 @@ async function main(): Promise<void> {
 
   const { config } = loaded
   log.info('config active', { config_hash: loaded.hash, routes: config.routes.length })
-  for (const w of loaded.warnings) log.warn('config warning', { warning: w })
   log.info('forwarding to', { base_url: settings.endcloseBaseUrl })
 
   const metrics = buildMetrics(db, dbPath)

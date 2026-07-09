@@ -117,24 +117,15 @@ export const routeSchema = z.object({
     .default(1024 * 1024),
 })
 
-// The config document is ROUTES ONLY. Everything else (End Close endpoint, ports,
-// dispatch/retention tuning) is a boot-time runtime setting from the environment — see
-// src/config/runtime.ts. Consequence: every applied config change takes effect live;
-// there is no "restart pending" state. Legacy top-level sections (endclose, ingest, …)
-// from configs written before this split are stripped and reported as warnings.
-export const relayConfigSchema = z.object({
-  routes: z.array(routeSchema).min(1),
-})
-
-export const LEGACY_CONFIG_KEYS = [
-  'endclose',
-  'ingest',
-  'admin',
-  'metrics',
-  'dispatch',
-  'retention',
-  'storage',
-] as const
+// The config document is ROUTES ONLY (strict: unknown top-level keys are rejected).
+// Everything else (End Close endpoint, ports, dispatch/retention tuning) is a boot-time
+// runtime setting from the environment — see src/config/runtime.ts. Consequence: every
+// applied config change takes effect live; there is no "restart pending" state.
+export const relayConfigSchema = z
+  .object({
+    routes: z.array(routeSchema).min(1),
+  })
+  .strict()
 
 export type RelayConfig = z.infer<typeof relayConfigSchema>
 export type RouteConfig = z.infer<typeof routeSchema>
