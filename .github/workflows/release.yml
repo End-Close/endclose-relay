@@ -41,8 +41,9 @@ jobs:
           # Distr registry auth: "No username is required, the PAT is linked directly to
           # your user account" — the username is the literal placeholder '-'.
           # https://distr.sh/docs/registry/configuration/
+          # The same PAT authenticates the registry and the version-create API below.
           username: '-'
-          password: ${{ secrets.DISTR_REGISTRY_TOKEN }} # Distr Personal Access Token
+          password: ${{ secrets.DISTR_API_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
           context: .
