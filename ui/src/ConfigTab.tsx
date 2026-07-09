@@ -51,15 +51,22 @@ export default function ConfigTab() {
   const [previewRoute, setPreviewRoute] = useState('')
   const [sampleText, setSampleText] = useState('')
   const [preview, setPreview] = useState<PreviewResult | null>(null)
-  const [restarting, setRestarting] = useState(false)
+  const [restarting, setRestarting] = useState<false | 'plain' | 'paused'>(false)
 
   const reload = () => {
     fetchConfig().then(
       (c) => {
         setYaml(c.yaml)
-        setActiveHash(c.hash)
-        setDirty(false)
-        setValidation(null)
+        setActiveHash(c.hash ?? '')
+        if (c.error) {
+          // Stored document fails validation (e.g. schema changed across an upgrade):
+          // preload it for repair and show the error where validate results appear.
+          setDirty(true)
+          setValidation({ valid: false, error: c.error })
+        } else {
+          setDirty(false)
+          setValidation(null)
+        }
         setSaveMsg(null)
       },
       () => {
@@ -76,8 +83,8 @@ export default function ConfigTab() {
   const onValidate = async () => setValidation(await validateConfig(yaml))
 
   /** After a bootstrap apply the process restarts itself; poll until it's back. */
-  const waitForRunning = async () => {
-    setRestarting(true)
+  const waitForRunning = async (paused: boolean) => {
+    setRestarting(paused ? 'paused' : 'plain')
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 1000))
       try {
@@ -103,7 +110,7 @@ export default function ConfigTab() {
       const res = await saveConfig(yaml)
       if (res.restarting) {
         setSaveMsg({ text: `applied ${res.applied.slice(0, 19)}… — relay is restarting into running mode` })
-        void waitForRunning()
+        void waitForRunning(res.paused ?? false)
         return
       }
       setSaveMsg({ text: `applied ${res.applied.slice(0, 19)}… — live` })
@@ -151,6 +158,12 @@ export default function ConfigTab() {
     return (
       <p className="my-8 text-center text-warn">
         configuration applied — the relay is restarting into running mode…
+        {restarting === 'paused' && (
+          <span className="mt-2 block">
+            Forwarding will be <strong>paused</strong> so you can review the repaired
+            config before the buffered backlog drains — resume from the status tab.
+          </span>
+        )}
       </p>
     )
   }

@@ -268,11 +268,20 @@ export default function App() {
             and redeploy before configuring.
           </p>
         )}
-        <p className="env-warning">
-          The relay is not configured yet. Paste your initial configuration below, use
-          validate + map preview with a sample payload, then apply — the relay restarts
-          itself into running mode. <strong>No webhooks are accepted until then.</strong>
-        </p>
+        {status.config_error ? (
+          <p className="env-warning">
+            <strong>The stored configuration failed validation</strong> (usually after an
+            upgrade that changed the schema). It's loaded below with the error — fix it
+            and apply; the relay restarts itself into running mode.{' '}
+            <strong>No webhooks are accepted until then.</strong>
+          </p>
+        ) : (
+          <p className="env-warning">
+            The relay is not configured yet. Paste your initial configuration below, use
+            validate + map preview with a sample payload, then apply — the relay restarts
+            itself into running mode. <strong>No webhooks are accepted until then.</strong>
+          </p>
+        )}
         {status.secret_envs.some((s) => !s.set) && (
           <p className="text-dim">
             note: unset secrets ({status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')})

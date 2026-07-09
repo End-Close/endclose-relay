@@ -124,6 +124,10 @@ The database is authoritative. `relay.yaml` seeds an empty appliance on first bo
 is ignored afterwards. Edits happen in the config tab: **validate** (schema + secret
 env status), **preview**, **apply** — each apply appends an immutable version (full
 YAML, SHA-256 hash, timestamp) and an audit entry, and **takes effect immediately**
-(the document is routes-only; nothing in it needs a restart). The version history
+(the document is routes-only; nothing in it needs a restart). If a stored config ever
+fails validation (e.g. across an upgrade), the relay boots into a **recovery editor**
+instead of crash-looping — and a repair applied from recovery restarts the relay with
+forwarding **paused**, holding any buffered backlog until an operator reviews the
+repaired config and resumes from the status tab. The version history
 supports loading any previous version back into the editor to restore it, and the
 active config can be downloaded as YAML at any time.
