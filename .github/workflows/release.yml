@@ -29,11 +29,16 @@ jobs:
       packages: write # push to ghcr.io with the built-in GITHUB_TOKEN
     steps:
       - uses: actions/checkout@v5
-      - name: Tag must match package.json version
+      - name: Tag must match package.json and the quick-start compose image
         run: |
           PKG=$(node -p "require('./package.json').version")
           if [ "v$PKG" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match package.json v$PKG" >&2
+            exit 1
+          fi
+          # The quick-start compose pins the GHCR image; a stale pin ships silent drift.
+          if ! grep -q "ghcr.io/end-close/relay:$GITHUB_REF_NAME" docker-compose.yaml; then
+            echo "docker-compose.yaml image ref is not ghcr.io/end-close/relay:$GITHUB_REF_NAME — bump it with the version" >&2
             exit 1
           fi
       - uses: docker/setup-qemu-action@v3
