@@ -72,9 +72,23 @@ their portal. `distr/docker-compose.yaml` is the compose file delivered through 
 channel (external data volume — undeploy never deletes data; secrets via the
 customer's Distr Secrets or a host file in strict mode). A fresh appliance boots into
 **bootstrap mode**: the admin UI serves a setup editor for the initial configuration
-and the relay restarts itself into running mode after the first apply. Releases are
-published by tagging `vX.Y.Z` (`.github/workflows/release.yml`). Full flow:
+and the relay restarts itself into running mode after the first apply. Full flow:
 [docs/ONBOARDING.md](docs/ONBOARDING.md).
+
+### Releasing
+
+Run the **Prepare release** workflow (Actions tab → choose patch/minor/major). It bumps
+`package.json` and the quick-start compose image tag and opens a `release/vX.Y.Z` PR;
+CI runs on it like any change. **Merging that PR** tags main automatically
+(`tag-release.yml`), and the tag fires `release.yml`: tests → multi-arch image to
+`registry.distr.sh/end-close/relay` and `ghcr.io/end-close/relay` → Distr application
+version (customers approve the rollout in their portal). Manual tagging still works —
+the release gate verifies tag ↔ package.json ↔ compose consistency either way.
+
+Requires a `RELEASE_TOKEN` repo secret (fine-grained PAT: contents + pull-requests
+read/write). The default `GITHUB_TOKEN` can't be used: events it creates don't trigger
+other workflows, so its PRs would never run CI and its tags would never run the
+release.
 
 The root `docker-compose.yaml` below is the manual/dev variant of the same appliance.
 

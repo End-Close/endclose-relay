@@ -1,0 +1,53 @@
+name: Prepare release
+
+# Stage 1 of the release flow: bump the version everywhere it lives and open a
+# release PR. Merging that PR triggers tag-release.yml (stage 2), which tags main and
+# thereby fires release.yml (build, publish to both registries, create the Distr
+# version).
+#
+# Uses RELEASE_TOKEN (fine-grained PAT: contents read/write + pull requests
+# read/write on this repo) instead of the default GITHUB_TOKEN, because events
+# created with GITHUB_TOKEN do not trigger other workflows — a PR opened with it
+# would never run CI, and a tag pushed with it would never run the release.
+# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Bump versions
+        id: bump
+        run: |
+          VERSION=$(npm version ${{ inputs.bump }} --no-git-tag-version) # prints vX.Y.Z
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Quick-start compose pins the GHCR image tag; the release gate enforces
+          # that it matches, so bump it here too.
+          sed -i "s|ghcr.io/end-close/relay:v[0-9][0-9.]*|ghcr.io/end-close/relay:$VERSION|" docker-compose.yaml
+          grep -q "ghcr.io/end-close/relay:$VERSION" docker-compose.yaml
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/$VERSION"
+          git commit -am "Release $VERSION"
+          git push -u origin "release/$VERSION"
+          gh pr create --base main --head "release/$VERSION" \
+            --title "Release $VERSION" \
+            --body "$(printf 'Bumps package.json and the quick-start compose image to %s.\n\nMerging this PR tags main as %s, which publishes the image to registry.distr.sh and ghcr.io and creates the Distr application version (customers approve rollout in their portal).' "$VERSION" "$VERSION")"

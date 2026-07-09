@@ -1,0 +1,34 @@
+name: Tag release
+
+# Stage 2: when a release/* PR (from prepare-release.yml) merges, tag main with the
+# version now in package.json. The tag push — made with RELEASE_TOKEN so it triggers
+# workflows — fires release.yml, which builds and publishes.
+# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Tag main with the merged version
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          if git rev-parse -q --verify "refs/tags/$VERSION" > /dev/null; then
+            echo "tag $VERSION already exists — nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+          echo "pushed $VERSION — release.yml takes it from here"
