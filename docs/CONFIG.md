@@ -10,28 +10,37 @@ promise: schema changes that would break an existing config fail our build.
 Secrets never appear in this file — fields ending in `_env` name an **environment
 variable** that holds the secret.
 
-## Top level
+## The config document: routes only
 
-| Section | Field | Default | Notes |
-|---|---|---|---|
-| `endclose` | `base_url` | `https://api.endclose.com/v1` | End Close public API |
-| | `api_key_env` | `ENDCLOSE_API_KEY` | env var holding the API key |
-| `ingest` | `port` / `host` | `8443` / `0.0.0.0` | webhook listener |
-| `admin` | `port` / `host` | `8081` / `0.0.0.0` | admin UI/API; **mandatory** `ADMIN_BASIC_AUTH=user:pass`; compose publishes it to the host's loopback only |
-| `metrics` | `port` / `host` | `9090` / `0.0.0.0` | Prometheus + `/healthz` `/readyz`; not published by default; optional `METRICS_BASIC_AUTH=user:pass` |
-| `dispatch` | `batch_max` | `100` | records per bulk POST (max 1000) |
-| | `poll_interval_ms` | `250` | dispatcher wake interval |
-| | `backoff_base_ms` / `backoff_cap_ms` | `1000` / `600000` | retry curve: base·2ⁿ ±20% jitter, capped |
-| | `park_after_ms` | 7 days | retrying events park (never dropped) after this |
-| `retention` | `delivered_days` | `7` | payloads of delivered/filtered events wiped after |
-| | `ledger_days` | `30` | their rows (idempotency ledger) deleted after |
-| `routes` | | *required, ≥1* | see below |
+The config document contains exactly one top-level key — `routes` — and **everything in
+it applies live** on apply; there is no restart-pending state. Anything boot-time
+(endpoints, ports, tuning) is an environment setting instead: mixing the two in one
+editable document is how "I changed it in the UI but nothing happened" incidents occur.
 
-Additional env vars (not in the config): `ADMIN_BASIC_AUTH` (required), `RELAY_CONFIG`
-(seed file path, default `/etc/endclose-relay/relay.yaml`), `RELAY_DB_PATH` (SQLite
-buffer, default `/var/lib/endclose-relay/relay.db` — env-only since the database must
-open before config can be read from it), `RELAY_DATA_KEY` (at-rest encryption),
-`MASKING_HMAC_KEY` (keys the `hash` transform), `METRICS_BASIC_AUTH`, `LOG_LEVEL`.
+The schema is strict: unknown top-level keys are rejected at validation, so a setting
+can never sit in the document silently doing nothing.
+
+## Environment settings
+
+| Env var | Default | Notes |
+|---|---|---|
+| `ENDCLOSE_API_KEY` | — | the End Close API key (fixed name) |
+| `ENDCLOSE_BASE_URL` | `https://api.endclose.com/v1` | override for staging/testing |
+| `ADMIN_BASIC_AUTH` | — | **required**; `user:password` protecting the admin UI/API |
+| `RELAY_DATA_KEY` / `MASKING_HMAC_KEY` | — | **required**; 32+ chars each (`openssl rand -hex 32`) |
+| `RELAY_DB_PATH` | `/var/lib/endclose-relay/relay.db` | SQLite location (must be known before config can load) |
+| `RELAY_CONFIG` | `/etc/endclose-relay/relay.yaml` | first-boot seed file path |
+| `RELAY_SECRETS_FILE` | — | strict mode: load secrets from a mounted file |
+| `RELAY_INGEST_PORT` / `RELAY_INGEST_HOST` | `8443` / `0.0.0.0` | webhook listener |
+| `RELAY_ADMIN_PORT` / `RELAY_ADMIN_HOST` | `8081` / `0.0.0.0` | admin UI/API (compose publishes host-loopback only) |
+| `RELAY_METRICS_PORT` / `RELAY_METRICS_HOST` | `9090` / `0.0.0.0` | Prometheus + `/healthz` `/readyz`; optional `METRICS_BASIC_AUTH` |
+| `RELAY_BATCH_MAX` | `100` | records per bulk POST (max 1000) |
+| `RELAY_POLL_INTERVAL_MS` | `250` | dispatcher wake interval |
+| `RELAY_BACKOFF_BASE_MS` / `RELAY_BACKOFF_CAP_MS` | `1000` / `600000` | retry curve: base·2ⁿ ±20% jitter, capped |
+| `RELAY_PARK_AFTER_MS` | 7 days | retrying events park (never dropped) after this |
+| `RELAY_RETENTION_DELIVERED_DAYS` | `7` | payloads of delivered/filtered events wiped after |
+| `RELAY_RETENTION_LEDGER_DAYS` | `30` | their rows (idempotency ledger) deleted after |
+| `LOG_LEVEL` | `info` | pino level |
 
 ## Routes
 
@@ -114,8 +123,7 @@ shows the outbound record plus every field that is *not* forwarded.
 The database is authoritative. `relay.yaml` seeds an empty appliance on first boot and
 is ignored afterwards. Edits happen in the config tab: **validate** (schema + secret
 env status), **preview**, **apply** — each apply appends an immutable version (full
-YAML, SHA-256 hash, timestamp) and an audit entry. Route-level changes take effect
-immediately; changes to ports, the `endclose` block, or dispatch/retention tuning apply
-on the next container restart (the UI flags "restart pending"). The version history
+YAML, SHA-256 hash, timestamp) and an audit entry, and **takes effect immediately**
+(the document is routes-only; nothing in it needs a restart). The version history
 supports loading any previous version back into the editor to restore it, and the
 active config can be downloaded as YAML at any time.

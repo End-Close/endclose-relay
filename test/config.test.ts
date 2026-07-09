@@ -10,9 +10,16 @@ describe('shipped configs stay parseable', () => {
   // These files are the customer-facing contract: a schema change that breaks them
   // would break existing deployments on update.
   it('relay.example.yaml', () => {
-    const { config } = parseConfig(readFileSync(join(ROOT, 'relay.example.yaml'), 'utf8'))
-    expect(config.routes.map((r) => r.id)).toEqual(['payabli-settlements', 'payabli-batches'])
-    expect(config.endclose.base_url).toBe('https://api.endclose.com/v1')
+    const loaded = parseConfig(readFileSync(join(ROOT, 'relay.example.yaml'), 'utf8'))
+    expect(loaded.config.routes.map((r) => r.id)).toEqual(['payabli-settlements', 'payabli-batches'])
+  })
+
+  it('rejects unknown top-level sections — the document is routes only', () => {
+    const withExtras = `
+endclose:
+  base_url: https://api-staging.endclose.com/v1
+` + readFileSync(join(ROOT, 'dev/relay.dev.yaml'), 'utf8')
+    expect(() => parseConfig(withExtras)).toThrow(/[Uu]nrecognized/)
   })
 
   it('dev/relay.dev.yaml', () => {

@@ -3,6 +3,7 @@ import { statSync } from 'node:fs'
 import { openDb, type Db } from './db/db.js'
 import { migrate } from './db/migrate.js'
 import { seedIfEmpty } from './config/store.js'
+import { loadRuntimeSettings } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
 import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
@@ -75,6 +76,7 @@ async function main(): Promise<void> {
   const dataKey = deriveKey('RELAY_DATA_KEY', process.env.RELAY_DATA_KEY)
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY)
   const adminAuth = process.env.ADMIN_BASIC_AUTH!
+  const settings = loadRuntimeSettings()
 
   const dbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
   const db = openDb(dbPath)
@@ -96,7 +98,6 @@ async function main(): Promise<void> {
       startedAt: Date.now(),
       basicAuth: adminAuth,
       maskingKey,
-      bootConfigHash: '',
       mode: 'bootstrap',
       onBootstrapApplied: () => {
         if (restarting) return
@@ -110,29 +111,28 @@ async function main(): Promise<void> {
       ready: () => dbReady(db),
       basicAuth: process.env.METRICS_BASIC_AUTH,
     })
-    await admin.listen({ port: 8081, host: '0.0.0.0' })
-    await metricsServer.listen({ port: 9090, host: '0.0.0.0' })
-    log.info('bootstrap mode ready', { version: VERSION, admin_port: 8081 })
+    await admin.listen({ port: settings.admin.port, host: settings.admin.host })
+    await metricsServer.listen({ port: settings.metrics.port, host: settings.metrics.host })
+    log.info('bootstrap mode ready', { version: VERSION, admin_port: settings.admin.port })
     return
   }
 
   const { config } = loaded
   log.info('config active', { config_hash: loaded.hash, routes: config.routes.length })
+  log.info('forwarding to', { base_url: settings.endcloseBaseUrl })
 
   const metrics = buildMetrics(db, dbPath)
   const signal = new EventEmitter()
   // A missing API key must not crash the relay: webhooks keep buffering (the point of
   // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
   // until the key is provided and the container restarted.
-  const apiKey = process.env[config.endclose.api_key_env] ?? ''
+  const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
   if (!apiKey) {
-    log.error('End Close API key env not set — buffering only, nothing will forward', {
-      env: config.endclose.api_key_env,
-    })
+    log.error('ENDCLOSE_API_KEY not set — buffering only, nothing will forward')
   }
-  const client = new EndCloseClient(config.endclose.base_url, apiKey)
+  const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
 
-  const dispatcher = new Dispatcher({ db, config, client, dataKey, maskingKey, signal, metrics })
+  const dispatcher = new Dispatcher({ db, settings, client, dataKey, maskingKey, signal, metrics })
   dispatcher.start()
 
   const ingest = buildIngestServer({ db, dataKey, signal, metrics })
@@ -142,7 +142,6 @@ async function main(): Promise<void> {
     startedAt: Date.now(),
     basicAuth: adminAuth,
     maskingKey,
-    bootConfigHash: loaded.hash,
   })
   const metricsServer = buildMetricsServer({
     metrics,
@@ -150,14 +149,14 @@ async function main(): Promise<void> {
     basicAuth: process.env.METRICS_BASIC_AUTH,
   })
 
-  await ingest.listen({ port: config.ingest.port, host: config.ingest.host })
-  await admin.listen({ port: config.admin.port, host: config.admin.host })
-  await metricsServer.listen({ port: config.metrics.port, host: config.metrics.host })
+  await ingest.listen({ port: settings.ingest.port, host: settings.ingest.host })
+  await admin.listen({ port: settings.admin.port, host: settings.admin.host })
+  await metricsServer.listen({ port: settings.metrics.port, host: settings.metrics.host })
   log.info('relay started', {
     version: VERSION,
-    ingest_port: config.ingest.port,
-    admin_port: config.admin.port,
-    metrics_port: config.metrics.port,
+    ingest_port: settings.ingest.port,
+    admin_port: settings.admin.port,
+    metrics_port: settings.metrics.port,
   })
 
   let shuttingDown = false

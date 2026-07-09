@@ -117,57 +117,15 @@ export const routeSchema = z.object({
     .default(1024 * 1024),
 })
 
-export const relayConfigSchema = z.object({
-  endclose: z.object({
-    base_url: z.string().url().default('https://api.endclose.com/v1'),
-    api_key_env: z.string().default('ENDCLOSE_API_KEY'),
-  }),
-  ingest: z
-    .object({
-      port: z.number().int().default(8443),
-      host: z.string().default('0.0.0.0'),
-    })
-    .default({}),
-  // Admin plane: management UI + API. Protected by mandatory basic auth
-  // (ADMIN_BASIC_AUTH). The shipped compose file publishes it to the HOST's loopback
-  // only; exposing it wider (behind your own TLS) is a deliberate customer action.
-  admin: z
-    .object({
-      port: z.number().int().default(8081),
-      host: z.string().default('0.0.0.0'),
-    })
-    .default({}),
-  // Prometheus + healthz/readyz for the customer's own monitoring. Not published by the
-  // shipped compose file; optional basic auth via METRICS_BASIC_AUTH=user:pass.
-  metrics: z
-    .object({
-      port: z.number().int().default(9090),
-      host: z.string().default('0.0.0.0'),
-    })
-    .default({}),
-  retention: z
-    .object({
-      // Payloads of delivered/filtered events are wiped after this many days (rows kept).
-      delivered_days: z.number().int().positive().default(7),
-      // Delivered/filtered rows (the idempotency ledger) are deleted after this many days.
-      ledger_days: z.number().int().positive().default(30),
-    })
-    .default({}),
-  dispatch: z
-    .object({
-      batch_max: z.number().int().positive().max(1000).default(100),
-      poll_interval_ms: z.number().int().positive().default(250),
-      backoff_base_ms: z.number().int().positive().default(1000),
-      backoff_cap_ms: z.number().int().positive().default(600_000),
-      park_after_ms: z
-        .number()
-        .int()
-        .positive()
-        .default(7 * 24 * 3600 * 1000),
-    })
-    .default({}),
-  routes: z.array(routeSchema).min(1),
-})
+// The config document is ROUTES ONLY (strict: unknown top-level keys are rejected).
+// Everything else (End Close endpoint, ports, dispatch/retention tuning) is a boot-time
+// runtime setting from the environment — see src/config/runtime.ts. Consequence: every
+// applied config change takes effect live; there is no "restart pending" state.
+export const relayConfigSchema = z
+  .object({
+    routes: z.array(routeSchema).min(1),
+  })
+  .strict()
 
 export type RelayConfig = z.infer<typeof relayConfigSchema>
 export type RouteConfig = z.infer<typeof routeSchema>

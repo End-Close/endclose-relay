@@ -25,13 +25,11 @@ export function getActiveConfig(db: Db): LoadedConfig | undefined {
 }
 
 /**
- * Validate and persist a new config version, rematerializing routes. Route-level changes
- * take effect immediately (ingest and dispatch read routes from the DB); everything else
- * (ports, endclose block, dispatch/retention tuning) applies at next boot.
+ * Validate and persist a new config version, rematerializing routes. The config is
+ * routes-only, and ingest/dispatch read routes from the DB — every apply is fully live.
  */
 export function saveConfig(db: Db, yamlText: string, appliedBy: string): LoadedConfig {
   const loaded = parseConfig(yamlText)
-  resolveSecret(loaded.config.endclose.api_key_env)
   for (const route of loaded.config.routes) resolveSecret(route.auth.secret_env)
 
   const routes = new RoutesRepo(db)

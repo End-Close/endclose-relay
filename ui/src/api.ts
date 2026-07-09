@@ -18,7 +18,6 @@ export interface Status {
   secret_envs: { name: string; set: boolean }[]
   config_hash: string | null
   config_applied_at: string | null
-  restart_pending: boolean
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]
@@ -112,7 +111,7 @@ export const replayAllParked = () => post<{ replayed: number }>('/events/replay-
 export const fetchConfig = () => get<ConfigInfo>('/config')
 export const validateConfig = (yaml: string) => post<ValidationResult>('/config/validate', { yaml })
 export const saveConfig = (yaml: string) =>
-  post<{ applied: string; restart_pending: boolean; restarting?: boolean }>('/config', { yaml })
+  post<{ applied: string; restarting?: boolean }>('/config', { yaml })
 export const previewConfig = (yaml: string, route: string, sample: unknown) =>
   post<PreviewResult>('/config/preview', { yaml, route, sample })
 export const fetchConfigVersions = () => get<ConfigVersion[]>('/config/versions')
