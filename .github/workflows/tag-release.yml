@@ -1,9 +1,9 @@
 name: Tag release
 
 # Stage 2: when a release/* PR (from prepare-release.yml) merges, tag main with the
-# version now in package.json. The tag push — made with RELEASE_TOKEN so it triggers
-# workflows — fires release.yml, which builds and publishes.
-# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+# version now in package.json. The tag push — made with the endclose-release GitHub
+# App's token so it triggers workflows — fires release.yml, which builds and publishes.
+# The default GITHUB_TOKEN is read-only here; the tag push uses the app token.
 permissions:
   contents: read
 
@@ -16,10 +16,15 @@ jobs:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v5
         with:
           ref: main
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
       - name: Tag main with the merged version
         run: |
           VERSION="v$(node -p "require('./package.json').version")"
@@ -27,8 +32,8 @@ jobs:
             echo "tag $VERSION already exists — nothing to do"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "endclose-release[bot]"
+          git config user.email "endclose-release[bot]@users.noreply.github.com"
           git tag -a "$VERSION" -m "Release $VERSION"
           git push origin "$VERSION"
           echo "pushed $VERSION — release.yml takes it from here"
