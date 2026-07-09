@@ -38,8 +38,11 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: registry.distr.sh
-          username: ${{ vars.DISTR_REGISTRY_USER }}
-          password: ${{ secrets.DISTR_REGISTRY_TOKEN }}
+          # Distr registry auth: "No username is required, the PAT is linked directly to
+          # your user account" — the username is the literal placeholder '-'.
+          # https://distr.sh/docs/registry/configuration/
+          username: '-'
+          password: ${{ secrets.DISTR_REGISTRY_TOKEN }} # Distr Personal Access Token
       - uses: docker/build-push-action@v6
         with:
           context: .
