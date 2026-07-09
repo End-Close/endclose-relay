@@ -17,7 +17,7 @@
 # Egress required: api.endclose.com:443 (plus your image registry for pulls). Nothing else.
 services:
   relay:
-    image: ghcr.io/end-close/relay:v0.3.0 # published by the release workflow on tags
+    image: ghcr.io/end-close/relay:v0.4.0 # published by the release workflow on tags
     build: .
     restart: unless-stopped
     ports:
