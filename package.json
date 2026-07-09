@@ -1,6 +1,6 @@
 {
   "name": "endclose-relay",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Self-hosted webhook relay appliance: receives payment-processor webhooks, persists, masks, and forwards them to End Close via the public API",
   "license": "UNLICENSED",
   "private": true,
