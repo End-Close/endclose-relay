@@ -3,6 +3,10 @@ name: Tag release
 # Stage 2: when a release/* PR (from prepare-release.yml) merges, tag main with the
 # version now in package.json. The tag push — made with RELEASE_TOKEN so it triggers
 # workflows — fires release.yml, which builds and publishes.
+# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+permissions:
+  contents: read
+
 on:
   pull_request:
     types: [closed]

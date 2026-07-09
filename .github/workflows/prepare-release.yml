@@ -9,6 +9,10 @@ name: Prepare release
 # read/write on this repo) instead of the default GITHUB_TOKEN, because events
 # created with GITHUB_TOKEN do not trigger other workflows — a PR opened with it
 # would never run CI, and a tag pushed with it would never run the release.
+# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
