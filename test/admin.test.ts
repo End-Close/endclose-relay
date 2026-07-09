@@ -264,12 +264,47 @@ describe('recovery mode (stored config invalid)', () => {
     expect(cfg.hash).toBeNull()
     expect(cfg.error).toContain('endclose')
 
-    // applying a fixed (routes-only) document works
+    // applying a fixed (routes-only) document works — and lands PAUSED: the repair was
+    // hand-edited and a backlog may be waiting, so egress is held for review
     const fixed = TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999')
     const res = await admin.inject({ method: 'POST', url: '/config', payload: { yaml: fixed }, headers: AUTH })
     expect(res.statusCode).toBe(200)
     expect(res.json().restarting).toBe(true)
+    expect(res.json().paused).toBe(true)
+    const { KvRepo } = await import('../src/db/repo/kv.js')
+    expect(new KvRepo(db).globalKillswitch()).toBe('pause')
+    const audit = (await admin.inject({ method: 'GET', url: '/audit', headers: AUTH })).json()
+    expect(audit.find((a: any) => a.actor === 'recovery')?.action).toBe('killswitch.pause')
 
+    await admin.close()
+    db.close()
+  })
+
+  it('a panic set before recovery is never loosened to pause', async () => {
+    const { openDb } = await import('../src/db/db.js')
+    const { migrate } = await import('../src/db/migrate.js')
+    const { KvRepo } = await import('../src/db/repo/kv.js')
+    const db = openDb(':memory:')
+    migrate(db)
+    new KvRepo(db).setGlobalKillswitch('panic')
+    const admin = buildAdminServer({
+      db,
+      dbPath: ':memory:',
+      startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      mode: 'bootstrap',
+      configError: 'Unrecognized key(s)',
+    })
+    await admin.ready()
+    const res = await admin.inject({
+      method: 'POST',
+      url: '/config',
+      payload: { yaml: TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999') },
+      headers: AUTH,
+    })
+    expect(res.json().paused).toBe(false)
+    expect(new KvRepo(db).globalKillswitch()).toBe('panic')
     await admin.close()
     db.close()
   })
@@ -311,6 +346,8 @@ describe('bootstrap mode', () => {
     const res = await admin.inject({ method: 'POST', url: '/config', payload: { yaml }, headers: AUTH })
     expect(res.statusCode).toBe(200)
     expect(res.json().restarting).toBe(true)
+    // fresh bootstrap (no configError): NOT paused — no backlog, config was previewed
+    expect(res.json().paused).toBe(false)
     expect(applied).toBe(1)
 
     await admin.close()

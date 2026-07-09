@@ -233,10 +233,22 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       return reply.code(422).send({ error: (err as Error).message })
     }
     if (mode === 'bootstrap') {
+      // Recovery (stored config was invalid): come back up PAUSED. The repair was
+      // hand-edited under pressure and a backlog may be waiting — hold egress until an
+      // operator reviews and resumes. Never loosen an existing pause/panic. A fresh
+      // bootstrap (no prior config, no backlog) restarts unpaused as before.
+      let paused = false
+      if (deps.configError && kv.globalKillswitch() === 'none') {
+        kv.setGlobalKillswitch('pause')
+        audit.log('recovery', 'killswitch.pause', {
+          reason: 'config repaired in recovery mode — forwarding held for review',
+        })
+        paused = true
+      }
       // First config: the process restarts itself (compose restart policy brings it
       // back through the normal boot path) rather than half-starting services here.
       deps.onBootstrapApplied?.()
-      return { applied: loaded.hash, restarting: true }
+      return { applied: loaded.hash, restarting: true, paused }
     }
     // The config is routes-only and routes are read live — every apply is fully active.
     return { applied: loaded.hash }

@@ -114,7 +114,7 @@ export const replayAllParked = () => post<{ replayed: number }>('/events/replay-
 export const fetchConfig = () => get<ConfigInfo>('/config')
 export const validateConfig = (yaml: string) => post<ValidationResult>('/config/validate', { yaml })
 export const saveConfig = (yaml: string) =>
-  post<{ applied: string; restarting?: boolean }>('/config', { yaml })
+  post<{ applied: string; restarting?: boolean; paused?: boolean }>('/config', { yaml })
 export const previewConfig = (yaml: string, route: string, sample: unknown) =>
   post<PreviewResult>('/config/preview', { yaml, route, sample })
 export const fetchConfigVersions = () => get<ConfigVersion[]>('/config/versions')
