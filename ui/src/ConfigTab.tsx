@@ -57,9 +57,16 @@ export default function ConfigTab() {
     fetchConfig().then(
       (c) => {
         setYaml(c.yaml)
-        setActiveHash(c.hash)
-        setDirty(false)
-        setValidation(null)
+        setActiveHash(c.hash ?? '')
+        if (c.error) {
+          // Stored document fails validation (e.g. schema changed across an upgrade):
+          // preload it for repair and show the error where validate results appear.
+          setDirty(true)
+          setValidation({ valid: false, error: c.error })
+        } else {
+          setDirty(false)
+          setValidation(null)
+        }
         setSaveMsg(null)
       },
       () => {

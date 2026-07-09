@@ -17,11 +17,50 @@ export interface ConfigVersion {
   applied_by: string
 }
 
-export function getActiveConfig(db: Db): LoadedConfig | undefined {
+/** Raw stored config, no validation — always readable even if the schema rejects it. */
+export function readActiveConfigRaw(db: Db): { yamlText: string } | undefined {
   const row = db
     .prepare('SELECT config_yaml FROM config_versions ORDER BY id DESC LIMIT 1')
     .get() as { config_yaml: string } | undefined
-  return row ? parseConfig(row.config_yaml) : undefined
+  return row ? { yamlText: row.config_yaml } : undefined
+}
+
+/** Parsed active config, or undefined when there is none OR it fails validation. */
+export function getActiveConfig(db: Db): LoadedConfig | undefined {
+  const raw = readActiveConfigRaw(db)
+  if (!raw) return undefined
+  try {
+    return parseConfig(raw.yamlText)
+  } catch {
+    return undefined
+  }
+}
+
+export type ActiveConfigState =
+  | { kind: 'ok'; loaded: LoadedConfig }
+  | { kind: 'empty' }
+  // Stored config exists but fails validation (e.g. written under an older schema).
+  // The relay must NOT crash-loop on this — it boots into the setup editor instead,
+  // with the stored document and the validation error, so the operator can fix it.
+  | { kind: 'invalid'; error: string }
+
+export function resolveActiveConfig(db: Db, seedPath: string | undefined): ActiveConfigState {
+  const raw = readActiveConfigRaw(db)
+  if (raw) {
+    try {
+      return { kind: 'ok', loaded: parseConfig(raw.yamlText) }
+    } catch (err) {
+      return { kind: 'invalid', error: (err as Error).message }
+    }
+  }
+  if (seedPath && existsSync(seedPath)) {
+    try {
+      return { kind: 'ok', loaded: saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed') }
+    } catch (err) {
+      return { kind: 'invalid', error: `seed file ${seedPath}: ${(err as Error).message}` }
+    }
+  }
+  return { kind: 'empty' }
 }
 
 /**
@@ -50,20 +89,6 @@ export function saveConfig(db: Db, yamlText: string, appliedBy: string): LoadedC
   })
   tx()
   return loaded
-}
-
-/**
- * First boot: seed the store from a relay.yaml if the database has no config yet.
- * Returns undefined when there is no config and no seed file — a valid state now:
- * the relay boots into bootstrap mode and the initial config is entered in the admin UI.
- */
-export function seedIfEmpty(db: Db, seedPath: string | undefined): LoadedConfig | undefined {
-  const active = getActiveConfig(db)
-  if (active) return active
-  if (seedPath && existsSync(seedPath)) {
-    return saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed')
-  }
-  return undefined
 }
 
 export function listConfigVersions(db: Db, limit = 50): ConfigVersion[] {

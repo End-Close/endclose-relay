@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
 import { openDb, type Db } from './db/db.js'
 import { migrate } from './db/migrate.js'
-import { seedIfEmpty } from './config/store.js'
+import { resolveActiveConfig } from './config/store.js'
 import { loadRuntimeSettings } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
 import { deriveKey } from './crypto/keys.js'
@@ -83,13 +83,22 @@ async function main(): Promise<void> {
   migrate(db)
 
   // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
-  const loaded = seedIfEmpty(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
+  const state = resolveActiveConfig(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
 
-  if (!loaded) {
-    // Bootstrap mode: no config yet. Serve the (authenticated) admin UI so the initial
-    // config can be entered; ingest and dispatch stay down. After the first apply the
-    // process exits cleanly and the container restart policy boots it into running mode.
-    log.warn('no configuration — bootstrap mode: admin UI on :8081, webhooks NOT accepted')
+  if (state.kind !== 'ok') {
+    // Bootstrap mode: no config yet — or a stored config that fails validation (e.g.
+    // written under an older schema). Crash-looping on the latter would leave no way to
+    // fix it; instead the (authenticated) admin UI serves the setup editor, preloaded
+    // with the stored document and its validation error. Ingest and dispatch stay down.
+    // After a successful apply the process exits cleanly and the container restart
+    // policy boots it into running mode.
+    if (state.kind === 'invalid') {
+      log.error('stored configuration fails validation — recovery via the admin UI', {
+        error: state.error,
+      })
+    } else {
+      log.warn('no configuration — bootstrap mode: admin UI on :8081, webhooks NOT accepted')
+    }
     const metrics = buildMetrics(db, dbPath)
     let restarting = false
     const admin = buildAdminServer({
@@ -99,6 +108,7 @@ async function main(): Promise<void> {
       basicAuth: adminAuth,
       maskingKey,
       mode: 'bootstrap',
+      ...(state.kind === 'invalid' ? { configError: state.error } : {}),
       onBootstrapApplied: () => {
         if (restarting) return
         restarting = true
@@ -117,6 +127,7 @@ async function main(): Promise<void> {
     return
   }
 
+  const { loaded } = state
   const { config } = loaded
   log.info('config active', { config_hash: loaded.hash, routes: config.routes.length })
   log.info('forwarding to', { base_url: settings.endcloseBaseUrl })

@@ -18,6 +18,7 @@ export interface Status {
   secret_envs: { name: string; set: boolean }[]
   config_hash: string | null
   config_applied_at: string | null
+  config_error: string | null
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]
@@ -49,7 +50,9 @@ export interface AuditRow {
 
 export interface ConfigInfo {
   yaml: string
-  hash: string
+  hash: string | null
+  /** Present when the stored document fails validation (recovery mode). */
+  error?: string
 }
 
 export interface ValidationResult {

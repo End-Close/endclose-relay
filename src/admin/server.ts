@@ -14,6 +14,7 @@ import {
   getActiveConfig,
   getConfigVersion,
   listConfigVersions,
+  readActiveConfigRaw,
   saveConfig,
 } from '../config/store.js'
 import { mapEvent, MappingError } from '../forward/mapper.js'
@@ -37,6 +38,8 @@ export interface AdminDeps {
   maskingKey: Buffer
   /** 'bootstrap' = no config yet: UI shows the setup editor; ingest is not running. */
   mode?: 'bootstrap' | 'running'
+  /** Set when a STORED config failed validation at boot (recovery via the editor). */
+  configError?: string
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
 }
@@ -110,6 +113,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       secret_envs: activeConfig ? envStatus(activeConfig) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
+      config_error: deps.configError ?? null,
       killswitch: {
         global: kv.globalKillswitch(),
         routes_paused: routes
@@ -192,9 +196,16 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   // ── config management (DB-authoritative; YAML is the interchange format) ──────
 
   app.get('/config', async (_req, reply) => {
-    const active = getActiveConfig(deps.db)
-    if (!active) return reply.code(404).send({ error: 'no config' })
-    return { yaml: active.yamlText, hash: active.hash }
+    // Raw read: must work even when the stored document fails validation, so the
+    // editor can load it for repair. The validation error rides along when present.
+    const raw = readActiveConfigRaw(deps.db)
+    if (!raw) return reply.code(404).send({ error: 'no config' })
+    try {
+      const loaded = parseConfig(raw.yamlText)
+      return { yaml: loaded.yamlText, hash: loaded.hash }
+    } catch (err) {
+      return { yaml: raw.yamlText, hash: null, error: (err as Error).message }
+    }
   })
 
   app.post('/config/validate', async (request) => {

@@ -194,24 +194,83 @@ describe('admin API', () => {
   })
 })
 
-describe('config store seeding', () => {
-  it('seeds only when empty; later saves are versioned', async () => {
+describe('config store resolution', () => {
+  it('uses the stored config when present; seed is a no-op', async () => {
     const { db } = setupDb() // setupDb saved version 1
-    const { seedIfEmpty } = await import('../src/config/store.js')
-    // DB already has config: seed is a no-op returning the active config
-    const active = seedIfEmpty(db, '/nonexistent/relay.yaml')
-    expect(active?.config.routes).toHaveLength(2)
+    const { resolveActiveConfig } = await import('../src/config/store.js')
+    const state = resolveActiveConfig(db, '/nonexistent/relay.yaml')
+    expect(state.kind).toBe('ok')
+    if (state.kind === 'ok') expect(state.loaded.config.routes).toHaveLength(2)
     db.close()
   })
 
-  it('returns undefined (bootstrap mode) when empty with no seed file', async () => {
+  it('empty DB with no seed file → bootstrap', async () => {
     const { openDb } = await import('../src/db/db.js')
     const { migrate } = await import('../src/db/migrate.js')
-    const { seedIfEmpty } = await import('../src/config/store.js')
+    const { resolveActiveConfig } = await import('../src/config/store.js')
     const db = openDb(':memory:')
     migrate(db)
-    expect(seedIfEmpty(db, '/nonexistent/relay.yaml')).toBeUndefined()
-    expect(seedIfEmpty(db, undefined)).toBeUndefined()
+    expect(resolveActiveConfig(db, '/nonexistent/relay.yaml').kind).toBe('empty')
+    expect(resolveActiveConfig(db, undefined).kind).toBe('empty')
+    db.close()
+  })
+
+  it('a stored config that fails validation → invalid, never a throw (no crash loops)', async () => {
+    const { openDb } = await import('../src/db/db.js')
+    const { migrate } = await import('../src/db/migrate.js')
+    const { resolveActiveConfig } = await import('../src/config/store.js')
+    const db = openDb(':memory:')
+    migrate(db)
+    // simulate a config written under an older schema (extra top-level section)
+    db.prepare(
+      'INSERT INTO config_versions (applied_at, config_hash, config_yaml, applied_by) VALUES (?, ?, ?, ?)',
+    ).run(new Date().toISOString(), 'sha256:old', 'endclose:\n  base_url: x\nroutes: []\n', 'seed')
+    const state = resolveActiveConfig(db, undefined)
+    expect(state.kind).toBe('invalid')
+    if (state.kind === 'invalid') expect(state.error.length).toBeGreaterThan(0)
+    db.close()
+  })
+})
+
+describe('recovery mode (stored config invalid)', () => {
+  it('serves the raw document + error so the editor can repair it', async () => {
+    const { openDb } = await import('../src/db/db.js')
+    const { migrate } = await import('../src/db/migrate.js')
+    const db = openDb(':memory:')
+    migrate(db)
+    const badYaml = 'endclose:\n  base_url: x\n' + TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999')
+    db.prepare(
+      'INSERT INTO config_versions (applied_at, config_hash, config_yaml, applied_by) VALUES (?, ?, ?, ?)',
+    ).run(new Date().toISOString(), 'sha256:old', badYaml, 'seed')
+
+    const admin = buildAdminServer({
+      db,
+      dbPath: ':memory:',
+      startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      mode: 'bootstrap',
+      configError: 'Unrecognized key(s) in object: endclose',
+    })
+    await admin.ready()
+
+    const status = (await admin.inject({ method: 'GET', url: '/status', headers: AUTH })).json()
+    expect(status.mode).toBe('bootstrap')
+    expect(status.config_error).toContain('endclose')
+
+    // GET /config returns the broken document for repair, with the parse error
+    const cfg = (await admin.inject({ method: 'GET', url: '/config', headers: AUTH })).json()
+    expect(cfg.yaml).toContain('endclose:')
+    expect(cfg.hash).toBeNull()
+    expect(cfg.error).toContain('endclose')
+
+    // applying a fixed (routes-only) document works
+    const fixed = TEST_CONFIG_YAML.replaceAll('__EC_PORT__', '9999')
+    const res = await admin.inject({ method: 'POST', url: '/config', payload: { yaml: fixed }, headers: AUTH })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().restarting).toBe(true)
+
+    await admin.close()
     db.close()
   })
 })
