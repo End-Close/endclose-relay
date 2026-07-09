@@ -30,11 +30,17 @@ export function checkRequiredEnv(
   return missing
 }
 
-export function buildSetupServer(missing: EnvCheck[]): FastifyInstance {
+export interface SetupStorageInfo {
+  dbPath: string
+  /** From isDbPathPersistent — false means the data dir is on the ephemeral layer. */
+  persistent: boolean | null
+}
+
+export function buildSetupServer(missing: EnvCheck[], storage?: SetupStorageInfo): FastifyInstance {
   const app = Fastify({ logger: false })
 
   app.get('/', async (_req, reply) =>
-    reply.header('content-type', 'text/html').send(setupPage(missing)),
+    reply.header('content-type', 'text/html').send(setupPage(missing, storage)),
   )
   // Liveness must succeed in setup mode: Distr's autoheal sidecar restarts unhealthy
   // containers, and a failing healthcheck here would restart-loop the relay while the
@@ -48,10 +54,20 @@ export function buildSetupServer(missing: EnvCheck[]): FastifyInstance {
   return app
 }
 
-function setupPage(missing: EnvCheck[]): string {
+function setupPage(missing: EnvCheck[], storage?: SetupStorageInfo): string {
   const rows = missing
     .map((m) => `<tr><td><code>${m.name}</code></td><td>${m.problem}</td></tr>`)
     .join('')
+  // Surface a missing data volume here too, so env and storage get fixed in ONE
+  // redeploy instead of discovering the volume problem on the next screen.
+  const storageWarning =
+    storage?.persistent === false
+      ? `<p class="warn"><strong>Also: no persistent volume detected.</strong> The data
+directory (<code>${storage.dbPath}</code>) is on the container's ephemeral filesystem —
+configuration and buffered webhooks would be lost on every restart. Attach a volume at
+that path (Docker volume / Kubernetes PersistentVolume) in the same redeploy that fixes
+the variables above.</p>`
+      : ''
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -68,10 +84,23 @@ function setupPage(missing: EnvCheck[]): string {
 <p>The relay refused to start because required environment variables are missing or
 invalid. <strong>No webhooks are being accepted or forwarded.</strong></p>
 <table>${rows}</table>
+${storageWarning}
 <p>Provide them as environment variables on the relay container — through whatever
 mechanism you manage secrets with (see <code>relay.example.yaml</code> for what each one
 does) — then recreate it:</p>
 <pre>docker compose up -d --force-recreate relay</pre>
+<p><code>RELAY_DATA_KEY</code> (encrypts buffered webhooks at rest) and
+<code>MASKING_HMAC_KEY</code> (keys the deterministic <code>hash</code> transform) are
+random strings you generate once, at least 32 characters — for example:</p>
+<pre>openssl rand -hex 32    # run twice: one value per key</pre>
+<p><strong>Back both up</strong> (they never leave this machine, and data at rest is
+unreadable without them), and use a distinct value for each. For
+<code>ADMIN_BASIC_AUTH</code>, pick a username and a strong password:
+<code>admin:$(openssl rand -base64 18)</code>.</p>
+<p>Only universally required variables are checked here. Secrets referenced by your
+configuration (e.g. <code>ENDCLOSE_API_KEY</code>, processor webhook secrets) can't be
+known before a configuration exists — they're validated in the admin UI once it does,
+and missing ones show as a warning banner rather than stopping the relay.</p>
 <p>This page is intentionally unauthenticated — it appears only while the relay is
 unconfigured and reveals nothing but variable names.</p>`
 }

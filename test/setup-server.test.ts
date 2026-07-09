@@ -57,10 +57,11 @@ describe('setup server', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('text/html')
     expect(res.body).toContain('setup required')
-    expect(res.body).toContain('MASKING_HMAC_KEY')
-    expect(res.body).toContain('ADMIN_BASIC_AUTH')
-    // no payloads, no secrets — just names
-    expect(res.body).not.toContain('RELAY_DATA_KEY')
+    expect(res.body).toContain('<td><code>MASKING_HMAC_KEY</code></td>')
+    expect(res.body).toContain('<td><code>ADMIN_BASIC_AUTH</code></td>')
+    // the missing-variables table lists only what's actually missing (RELAY_DATA_KEY
+    // appears elsewhere on the page in the key-generation guidance)
+    expect(res.body).not.toContain('<td><code>RELAY_DATA_KEY</code></td>')
   })
 
   it('answers everything else with 503 not-configured', async () => {
@@ -73,5 +74,35 @@ describe('setup server', () => {
     const res = await server.inject({ method: 'GET', url: '/healthz' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ ok: true, mode: 'env-setup' })
+  })
+
+  it('explains key generation and config-referenced secrets', async () => {
+    const body = (await server.inject({ method: 'GET', url: '/' })).body
+    expect(body).toContain('openssl rand -hex 32')
+    expect(body).toContain('ENDCLOSE_API_KEY')
+    expect(body).toContain("can't be\nknown before a configuration exists")
+  })
+
+  it('warns about a missing volume alongside the env problems', async () => {
+    const withStorage = buildSetupServer(
+      [{ name: 'ADMIN_BASIC_AUTH', problem: 'not set' }],
+      { dbPath: '/var/lib/endclose-relay/relay.db', persistent: false },
+    )
+    await withStorage.ready()
+    const body = (await withStorage.inject({ method: 'GET', url: '/' })).body
+    expect(body).toContain('no persistent volume detected')
+    expect(body).toContain('/var/lib/endclose-relay/relay.db')
+    await withStorage.close()
+
+    // persistent or unknown → no storage warning
+    const noWarn = buildSetupServer(
+      [{ name: 'ADMIN_BASIC_AUTH', problem: 'not set' }],
+      { dbPath: '/var/lib/endclose-relay/relay.db', persistent: null },
+    )
+    await noWarn.ready()
+    expect((await noWarn.inject({ method: 'GET', url: '/' })).body).not.toContain(
+      'persistent volume',
+    )
+    await noWarn.close()
   })
 })

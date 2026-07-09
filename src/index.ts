@@ -8,6 +8,7 @@ import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
 import { buildAdminServer } from './admin/server.js'
 import { buildSetupServer, checkRequiredEnv } from './admin/setup-server.js'
+import { isDbPathPersistent } from './db/persistence.js'
 import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
 import { Dispatcher } from './forward/dispatcher.js'
@@ -54,13 +55,18 @@ async function main(): Promise<void> {
   if (secrets.error) log.error('secrets file problem', { error: secrets.error })
 
   // Boot check: with required env missing we can't run — but instead of crash-looping,
-  // serve a setup page on the admin port naming exactly what's wrong.
+  // serve a setup page on the admin port naming exactly what's wrong (including a
+  // missing data volume, so env and storage get fixed in one redeploy).
   const missingEnv = checkRequiredEnv(process.env, secrets.error)
   if (missingEnv.length > 0) {
     log.error('setup required: missing/invalid environment', {
       missing: missingEnv.map((m) => `${m.name} (${m.problem})`).join(', '),
     })
-    const setup = buildSetupServer(missingEnv)
+    const setupDbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
+    const setup = buildSetupServer(missingEnv, {
+      dbPath: setupDbPath,
+      persistent: isDbPathPersistent(setupDbPath),
+    })
     await setup.listen({ port: 8081, host: '0.0.0.0' })
     log.warn('serving setup page on :8081 — webhooks are NOT being accepted')
     return
