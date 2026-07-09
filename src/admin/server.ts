@@ -17,6 +17,7 @@ import {
   saveConfig,
 } from '../config/store.js'
 import { mapEvent, MappingError } from '../forward/mapper.js'
+import { isDbPathPersistent } from '../db/persistence.js'
 import type { Json } from '../mask/paths.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
@@ -49,6 +50,9 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
   const mode = deps.mode ?? 'running'
+  // Mounts don't change at runtime; check once. false = data dir sits on the container's
+  // ephemeral layer — everything is lost on restart, and the UI warns loudly.
+  const persistent = isDbPathPersistent(deps.dbPath)
 
   const expectedAuth = 'Basic ' + Buffer.from(deps.basicAuth, 'utf8').toString('base64')
   app.addHook('onRequest', async (request, reply) => {
@@ -130,7 +134,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
             : null,
         }
       }),
-      storage: { db_path: deps.dbPath, db_bytes: dbBytes(deps.dbPath) },
+      storage: { db_path: deps.dbPath, db_bytes: dbBytes(deps.dbPath), persistent },
     }
   })
 
