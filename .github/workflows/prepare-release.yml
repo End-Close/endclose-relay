@@ -5,11 +5,12 @@ name: Prepare release
 # thereby fires release.yml (build, publish to both registries, create the Distr
 # version).
 #
-# Uses RELEASE_TOKEN (fine-grained PAT: contents read/write + pull requests
-# read/write on this repo) instead of the default GITHUB_TOKEN, because events
-# created with GITHUB_TOKEN do not trigger other workflows — a PR opened with it
-# would never run CI, and a tag pushed with it would never run the release.
-# The default GITHUB_TOKEN is read-only here; all pushes/PRs use RELEASE_TOKEN.
+# Authenticates as the endclose-release GitHub App (vars.RELEASE_APP_ID +
+# secrets.RELEASE_APP_PRIVATE_KEY): a short-lived installation token is minted per
+# run, the PR is authored by the app bot (so either maintainer can approve it), and —
+# unlike the default GITHUB_TOKEN, whose events never trigger other workflows — app
+# tokens fire CI on the PR and the release on the tag.
+# The default GITHUB_TOKEN is read-only here; all pushes/PRs use the app token.
 permissions:
   contents: read
 
@@ -26,9 +27,14 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v5
         with:
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
       - name: Bump versions
         id: bump
         run: |
@@ -40,11 +46,11 @@ jobs:
           grep -q "ghcr.io/end-close/relay:$VERSION" docker-compose.yaml
       - name: Open release PR
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "endclose-release[bot]"
+          git config user.email "endclose-release[bot]@users.noreply.github.com"
           git checkout -b "release/$VERSION"
           git commit -am "Release $VERSION"
           git push -u origin "release/$VERSION"

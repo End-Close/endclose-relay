@@ -85,10 +85,12 @@ CI runs on it like any change. **Merging that PR** tags main automatically
 version (customers approve the rollout in their portal). Manual tagging still works —
 the release gate verifies tag ↔ package.json ↔ compose consistency either way.
 
-Requires a `RELEASE_TOKEN` repo secret (fine-grained PAT: contents + pull-requests
-read/write). The default `GITHUB_TOKEN` can't be used: events it creates don't trigger
-other workflows, so its PRs would never run CI and its tags would never run the
-release.
+Requires the `endclose-release` GitHub App (org-owned; Contents + Pull requests
+read/write; installed on this repo) with `RELEASE_APP_ID` as a repo variable and
+`RELEASE_APP_PRIVATE_KEY` as a secret — the workflows mint short-lived app tokens per
+run, and release PRs/tags are authored by the app bot. The default `GITHUB_TOKEN`
+can't drive this: events it creates don't trigger other workflows, so its PRs would
+never run CI and its tags would never run the release.
 
 The root `docker-compose.yaml` below is the manual/dev variant of the same appliance.
 
