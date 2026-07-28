@@ -7,8 +7,10 @@ export type Db = Database.Database
 export function openDb(path: string): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
-  db.pragma('journal_mode = WAL')
-  // FULL: an acked webhook must survive power loss — this is the store-and-forward contract.
+  // DELETE (rollback journal), not WAL: WAL needs shared-memory primitives that network
+  // filesystems (EFS/NFS) do not provide correctly. Durability comes from synchronous=FULL
+  // below — an acked webhook must survive power loss (the store-and-forward contract).
+  db.pragma('journal_mode = DELETE')
   db.pragma('synchronous = FULL')
   db.pragma('foreign_keys = ON')
   db.pragma('busy_timeout = 5000')
