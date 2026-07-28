@@ -108,8 +108,11 @@ telemetry, no phone-home from the relay itself.
 - Buffered payloads are encrypted with **AES-256-GCM** (per-row random IV) under a key
 derived from `RELAY_DATA_KEY`, which you generate and hold. A copied volume or backup
 exposes ciphertext.
-- Storage is a single SQLite database on a named Docker volume, written with
-`synchronous=FULL` so an acknowledged webhook survives power loss.
+- Storage is a single SQLite database on a named Docker volume (or equivalent
+persistent mount such as EBS/EFS), written with a rollback journal
+(`journal_mode=DELETE`) and `synchronous=FULL` so an acknowledged webhook
+survives power loss. Rollback journal (not WAL) is required for network
+filesystems such as EFS.
 - **Retention:** payloads of successfully delivered (or filtered) events are wiped after
 7 days; their rows — kept as an idempotency ledger — are deleted after 30. Both are
 configurable. Failed events are **parked**, kept until you replay or resolve them,

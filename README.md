@@ -7,7 +7,7 @@ Payment-processor webhooks (Payabli first) point at the relay inside **your** in
 The relay:
 
 1. **Verifies** each webhook (static-header + source-IP for Payabli; HMAC for processors that sign).
-2. **Persists it durably** (encrypted, SQLite `synchronous=FULL`) *before* acknowledging — no
+2. **Persists it durably** (encrypted, SQLite rollback journal + `synchronous=FULL`) *before* acknowledging — no
    data loss if End Close is unreachable.
 3. **Maps** each event to an End Close record through an explicit field map — the map *is*
    the allowlist: nothing leaves your network unless a field is named in it (optionally
