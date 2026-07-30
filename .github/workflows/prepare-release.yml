@@ -2,8 +2,7 @@ name: Prepare release
 
 # Stage 1 of the release flow: bump the version everywhere it lives and open a
 # release PR. Merging that PR triggers tag-release.yml (stage 2), which tags main and
-# thereby fires release.yml (build, publish to both registries, create the Distr
-# version).
+# thereby fires release.yml (build and publish the image to ghcr.io).
 #
 # Authenticates as the endclose-release GitHub App (vars.RELEASE_APP_ID +
 # secrets.RELEASE_APP_PRIVATE_KEY): a short-lived installation token is minted per
@@ -56,4 +55,4 @@ jobs:
           git push -u origin "release/$VERSION"
           gh pr create --base main --head "release/$VERSION" \
             --title "Release $VERSION" \
-            --body "$(printf 'Bumps package.json and the quick-start compose image to %s.\n\nMerging this PR tags main as %s, which publishes the image to registry.distr.sh and ghcr.io and creates the Distr application version (customers approve rollout in their portal).' "$VERSION" "$VERSION")"
+            --body "$(printf 'Bumps package.json and the quick-start compose image to %s.\n\nMerging this PR tags main as %s, which publishes the image to ghcr.io/end-close/relay.' "$VERSION" "$VERSION")"

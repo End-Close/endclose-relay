@@ -42,9 +42,9 @@ export function buildSetupServer(missing: EnvCheck[], storage?: SetupStorageInfo
   app.get('/', async (_req, reply) =>
     reply.header('content-type', 'text/html').send(setupPage(missing, storage)),
   )
-  // Liveness must succeed in setup mode: Distr's autoheal sidecar restarts unhealthy
-  // containers, and a failing healthcheck here would restart-loop the relay while the
-  // operator is reading this very page.
+  // Liveness must succeed in setup mode: an orchestrator that restarts unhealthy
+  // containers would otherwise restart-loop the relay while the operator is reading
+  // this page.
   app.get('/healthz', async () => ({ ok: true, mode: 'env-setup' }))
   // Anything else (probes, the UI's API calls) gets an unambiguous "not configured".
   app.setNotFoundHandler(async (_req, reply) =>

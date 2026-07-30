@@ -17,6 +17,9 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
+# In-container operator CLI (ECS Exec / docker exec). Uses ADMIN_BASIC_AUTH from env.
+RUN printf '%s\n' '#!/bin/sh' 'exec node /app/dist/cli/relayctl.js "$@"' > /usr/local/bin/relayctl \
+    && chmod 755 /usr/local/bin/relayctl
 USER relay
 ENV NODE_ENV=production RELAY_CONFIG=/etc/endclose-relay/relay.yaml
 EXPOSE 8443

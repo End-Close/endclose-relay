@@ -1,0 +1,422 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  endclose-relay on Fargate with EFS (SQLite store-and-forward). Single task,
+  public ALB for webhook ingest (:8443), admin (:8081) only on the task SG
+  (reach via SSM/VPN — not on the public ALB).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the internet-facing ALB (typically public).
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for Fargate tasks + EFS mount targets (typically private with NAT).
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN for the HTTPS listener (same region).
+  SecretArn:
+    Type: String
+    Description: >
+      Secrets Manager secret ARN whose JSON keys are ENDCLOSE_API_KEY,
+      PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY, MASKING_HMAC_KEY, ADMIN_BASIC_AUTH.
+  Image:
+    Type: String
+    Default: ghcr.io/end-close/relay:latest
+  ServiceName:
+    Type: String
+    Default: endclose-relay
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [1]
+    Description: Must remain 1 — SQLite is single-writer.
+  Cpu:
+    Type: String
+    Default: '512'
+    AllowedValues: ['256', '512', '1024', '2048']
+  Memory:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['512', '1024', '2048', '4096']
+  AssignPublicIp:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+    Description: ENABLED only if private subnets lack NAT and tasks need a public IP to pull/egress.
+  AdminCidr:
+    Type: String
+    Default: ''
+    Description: >
+      Optional CIDR allowed to reach admin :8081 on the task SG (e.g. VPN or bastion).
+      Leave empty to rely on ECS Exec only (no inbound 8081).
+
+Conditions:
+  AllowAdminCidr: !Not [!Equals [!Ref AdminCidr, '']]
+
+Resources:
+  # ── Security groups ─────────────────────────────────────────────────────────
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: endclose-relay public ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS webhooks (Payabli)
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP redirect to HTTPS
+      Tags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-alb'
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: endclose-relay Fargate tasks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8443
+          ToPort: 8443
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          Description: Ingest from ALB
+      Tags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-task'
+
+  TaskAdminFromCidr:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AllowAdminCidr
+    Properties:
+      GroupId: !Ref TaskSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8081
+      ToPort: 8081
+      CidrIp: !Ref AdminCidr
+      Description: Admin UI from operator CIDR (VPN/bastion)
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: endclose-relay EFS mount targets
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref TaskSecurityGroup
+          Description: NFS from Fargate tasks
+      Tags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-efs'
+
+  # ── EFS ─────────────────────────────────────────────────────────────────────
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-data'
+
+  AccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser:
+        Uid: '999'
+        Gid: '999'
+      RootDirectory:
+        Path: /relay-data
+        CreationInfo:
+          OwnerUid: '999'
+          OwnerGid: '999'
+          Permissions: '0755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-data'
+
+  MountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [0, !Ref PrivateSubnetIds]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Select [1, !Ref PrivateSubnetIds]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  # ── IAM ─────────────────────────────────────────────────────────────────────
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref SecretArn
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: efs-and-exec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Resource: !GetAtt FileSystem.Arn
+                Condition:
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn: !GetAtt AccessPoint.Arn
+              # ECS Exec (SSM) — reach the admin UI via port-forward without exposing :8081 publicly
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  # ── Logs / ECS ──────────────────────────────────────────────────────────────
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${ServiceName}'
+      RetentionInDays: 30
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ServiceName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - MountTarget0
+      - MountTarget1
+    Properties:
+      Family: !Ref ServiceName
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      Volumes:
+        - Name: relay-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref FileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref AccessPoint
+              IAM: ENABLED
+      ContainerDefinitions:
+        - Name: relay
+          Image: !Ref Image
+          Essential: true
+          ReadonlyRootFilesystem: true
+          PortMappings:
+            - ContainerPort: 8443
+              Protocol: tcp
+              Name: ingest
+            - ContainerPort: 8081
+              Protocol: tcp
+              Name: admin
+          MountPoints:
+            - SourceVolume: relay-data
+              ContainerPath: /var/lib/endclose-relay
+              ReadOnly: false
+          LinuxParameters:
+            Tmpfs:
+              - ContainerPath: /tmp
+                Size: 64
+                MountOptions: [rw, noexec, nosuid, nodev]
+          Secrets:
+            - Name: ENDCLOSE_API_KEY
+              ValueFrom: !Sub '${SecretArn}:ENDCLOSE_API_KEY::'
+            - Name: PAYABLI_WEBHOOK_SECRET
+              ValueFrom: !Sub '${SecretArn}:PAYABLI_WEBHOOK_SECRET::'
+            - Name: RELAY_DATA_KEY
+              ValueFrom: !Sub '${SecretArn}:RELAY_DATA_KEY::'
+            - Name: MASKING_HMAC_KEY
+              ValueFrom: !Sub '${SecretArn}:MASKING_HMAC_KEY::'
+            - Name: ADMIN_BASIC_AUTH
+              ValueFrom: !Sub '${SecretArn}:ADMIN_BASIC_AUTH::'
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - >-
+                node -e "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: relay
+
+  # ── Load balancer ───────────────────────────────────────────────────────────
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      # Omit Name — ALB names are capped at 32 chars; long stack names would fail create.
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets: !Ref PublicSubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-alb'
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      # Omit Name — target group names are also capped at 32 chars.
+      VpcId: !Ref VpcId
+      Port: 8443
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckEnabled: true
+      # Admin /healthz answers in setup, bootstrap, and running modes. Ingest :8443 is
+      # down until config is applied — health-checking it bricks first boot (circuit breaker).
+      HealthCheckPath: /healthz
+      HealthCheckPort: '8081'
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ServiceName}-ingest'
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  HttpRedirectListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: '443'
+            StatusCode: HTTP_301
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HttpsListener
+      - MountTarget0
+      - MountTarget1
+    Properties:
+      ServiceName: !Ref ServiceName
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !Ref AssignPublicIp
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+      LoadBalancers:
+        - ContainerName: relay
+          ContainerPort: 8443
+          TargetGroupArn: !Ref TargetGroup
+      EnableExecuteCommand: true
+      HealthCheckGracePeriodSeconds: 120
+
+Outputs:
+  LoadBalancerDns:
+    Description: Point your relay hostname (CNAME/Alias) here, then configure Payabli.
+    Value: !GetAtt Alb.DNSName
+  IngestBaseUrl:
+    Description: Webhook base (add /ingest/<route-id>). Replace host with your DNS name once aliased.
+    Value: !Sub 'https://${Alb.DNSName}'
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !Ref ServiceName
+  FileSystemId:
+    Value: !Ref FileSystem
+  AccessPointId:
+    Value: !Ref AccessPoint
+  TaskSecurityGroupId:
+    Value: !Ref TaskSecurityGroup
+  SecretArn:
+    Value: !Ref SecretArn
+  LogGroupName:
+    Value: !Ref LogGroup
