@@ -357,10 +357,21 @@ Resources:
               ContainerPath: /var/lib/endclose-relay
               ReadOnly: false
           LinuxParameters:
+            # /tmp for the app; SSM Exec agent needs writable dirs under a read-only root
+            # (otherwise ExecuteCommandAgent stays STOPPED and ecs execute-command fails).
             Tmpfs:
               - ContainerPath: /tmp
                 Size: 64
                 MountOptions: [rw, noexec, nosuid, nodev]
+              - ContainerPath: /managed-agents
+                Size: 64
+                MountOptions: [rw, nosuid, nodev]
+              - ContainerPath: /var/lib/amazon/ssm
+                Size: 64
+                MountOptions: [rw, nosuid, nodev]
+              - ContainerPath: /var/log/amazon/ssm
+                Size: 32
+                MountOptions: [rw, nosuid, nodev]
           Secrets:
             - Name: ENDCLOSE_API_KEY
               ValueFrom: !Sub '${SecretArn}:ENDCLOSE_API_KEY::'
