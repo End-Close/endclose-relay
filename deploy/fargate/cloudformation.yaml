@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   End Close relay (endclose-relay) on Fargate with EFS (SQLite store-and-forward).
   Single task, public ALB for webhook ingest (:8443), admin (:8081) only on the
-  task SG (reach via SSM/VPN — not on the public ALB).
+  task SG (reach via SSM/VPN - not on the public ALB).
 
   Tagging: every taggable resource gets Application=endclose-relay, a Name, a
   Component, and ManagedBy=<stack name> so consoles/cost reports show they belong
@@ -45,7 +45,7 @@ Parameters:
     Type: Number
     Default: 1
     AllowedValues: [1]
-    Description: Must remain 1 — SQLite is single-writer.
+    Description: Must remain 1 - SQLite is single-writer.
   Cpu:
     Type: String
     Default: '512'
@@ -74,14 +74,14 @@ Resources:
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: End Close relay — public ALB (HTTPS webhook ingest)
+      GroupDescription: End Close relay - public ALB (HTTPS webhook ingest)
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: HTTPS webhooks (Payabli → End Close relay)
+          Description: HTTPS webhooks (Payabli -> End Close relay)
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
@@ -100,7 +100,7 @@ Resources:
   TaskSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: End Close relay — Fargate task ENIs (ingest :8443, admin :8081)
+      GroupDescription: End Close relay - Fargate task ENIs (ingest :8443, admin :8081)
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -132,7 +132,7 @@ Resources:
   EfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: End Close relay — EFS mount targets (SQLite data volume)
+      GroupDescription: End Close relay - EFS mount targets (SQLite data volume)
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -212,7 +212,7 @@ Resources:
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: !Sub 'ECS task execution role for End Close relay (${ServiceName}) — pull image, write logs, read secrets'
+      Description: !Sub 'ECS task execution role for End Close relay (${ServiceName}) - pull image, write logs, read secrets'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -244,7 +244,7 @@ Resources:
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: !Sub 'ECS task role for End Close relay (${ServiceName}) — EFS mount + ECS Exec'
+      Description: !Sub 'ECS task role for End Close relay (${ServiceName}) - EFS mount + ECS Exec'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -265,7 +265,7 @@ Resources:
                 Condition:
                   StringEquals:
                     elasticfilesystem:AccessPointArn: !GetAtt AccessPoint.Arn
-              # ECS Exec (SSM) — shell / relayctl without exposing :8081 publicly
+              # ECS Exec (SSM) - shell / relayctl without exposing :8081 publicly
               - Effect: Allow
                 Action:
                   - ssmmessages:CreateControlChannel
@@ -401,7 +401,7 @@ Resources:
   Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      # Omit Name — ALB names are capped at 32 chars; long stack names would fail create.
+      # Omit Name - ALB names are capped at 32 chars; long stack names would fail create.
       Scheme: internet-facing
       Type: application
       SecurityGroups:
@@ -420,14 +420,14 @@ Resources:
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      # Omit Name — target group names are also capped at 32 chars.
+      # Omit Name - target group names are also capped at 32 chars.
       VpcId: !Ref VpcId
       Port: 8443
       Protocol: HTTP
       TargetType: ip
       HealthCheckEnabled: true
       # Admin /healthz answers in setup, bootstrap, and running modes. Ingest :8443 is
-      # down until config is applied — health-checking it bricks first boot (circuit breaker).
+      # down until config is applied - health-checking it bricks first boot (circuit breaker).
       HealthCheckPath: /healthz
       HealthCheckPort: '8081'
       HealthCheckProtocol: HTTP
@@ -533,7 +533,7 @@ Resources:
 
 Outputs:
   LoadBalancerDns:
-    Description: End Close relay ALB DNS — point your relay hostname (CNAME/Alias) here, then configure Payabli.
+    Description: End Close relay ALB DNS - point your relay hostname (CNAME/Alias) here, then configure Payabli.
     Value: !GetAtt Alb.DNSName
   IngestBaseUrl:
     Description: Webhook base for the End Close relay (add /ingest/<route-id>). Replace host with your DNS name once aliased.
