@@ -90,7 +90,10 @@ That hostname must match the ACM certificate (or be covered by it).
 **Admin UI** does not use this hostname: `:8081` stays off the public ALB. Reach it via
 VPN / Tailscale into the VPC (`--admin-cidr`) or ECS Exec — private IP is enough.
 ECS Exec needs writable mounts for the SSM agent under the container’s read-only root;
-the template provides those (`/managed-agents`, `/var/lib/amazon/ssm`, `/var/log/amazon/ssm`).
+the template provides those (`/managed-agents`, `/var/lib/amazon/ssm`, `/var/log/amazon/ssm`)
+as empty task volumes. They must be volumes, not `LinuxParameters.Tmpfs` — ECS bind-mounts
+the agent binary onto `/managed-agents/execute-command`, and a tmpfs over `/managed-agents`
+hides it, leaving the exec agent unable to start.
 After changing the task definition, force a new deployment so the running task picks it up.
 
 ## Secrets

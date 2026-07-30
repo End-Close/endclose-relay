@@ -340,6 +340,17 @@ Resources:
             AuthorizationConfig:
               AccessPointId: !Ref AccessPoint
               IAM: ENABLED
+        # Empty ephemeral volumes so the SSM Exec agent has writable paths under the
+        # read-only root. These must be volumes, not LinuxParameters.Tmpfs: ECS bind-mounts
+        # the agent binary onto /managed-agents/execute-command, and a tmpfs over
+        # /managed-agents hides it ("stat /managed-agents/execute-command/amazon-ssm-agent:
+        # no such file or directory", ExecuteCommandAgent STOPPED).
+        - Name: managed-agents
+          Host: {}
+        - Name: var-lib-amazon-ssm
+          Host: {}
+        - Name: var-log-amazon-ssm
+          Host: {}
       ContainerDefinitions:
         - Name: relay
           Image: !Ref Image
@@ -356,22 +367,23 @@ Resources:
             - SourceVolume: relay-data
               ContainerPath: /var/lib/endclose-relay
               ReadOnly: false
+            # ECS bind-mounts the exec agent onto /managed-agents/execute-command, so
+            # /managed-agents itself has to be writable for the mount point to be created.
+            - SourceVolume: managed-agents
+              ContainerPath: /managed-agents
+              ReadOnly: false
+            - SourceVolume: var-lib-amazon-ssm
+              ContainerPath: /var/lib/amazon/ssm
+              ReadOnly: false
+            - SourceVolume: var-log-amazon-ssm
+              ContainerPath: /var/log/amazon/ssm
+              ReadOnly: false
           LinuxParameters:
-            # /tmp for the app; SSM Exec agent needs writable dirs under a read-only root
-            # (otherwise ExecuteCommandAgent stays STOPPED and ecs execute-command fails).
+            # /tmp for the app.
             Tmpfs:
               - ContainerPath: /tmp
                 Size: 64
                 MountOptions: [rw, noexec, nosuid, nodev]
-              - ContainerPath: /managed-agents
-                Size: 64
-                MountOptions: [rw, nosuid, nodev]
-              - ContainerPath: /var/lib/amazon/ssm
-                Size: 64
-                MountOptions: [rw, nosuid, nodev]
-              - ContainerPath: /var/log/amazon/ssm
-                Size: 32
-                MountOptions: [rw, nosuid, nodev]
           Secrets:
             - Name: ENDCLOSE_API_KEY
               ValueFrom: !Sub '${SecretArn}:ENDCLOSE_API_KEY::'
