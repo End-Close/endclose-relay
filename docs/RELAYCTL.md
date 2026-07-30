@@ -63,7 +63,7 @@ relayctl config get -o /tmp/relay.yaml
 relayctl config validate /tmp/relay.yaml
 relayctl config apply /tmp/relay.yaml
 
-EDITOR=vi relayctl config edit   # fetch → editor → apply in one step
+relayctl config edit   # fetch → editor → apply in one step ($EDITOR defaults to vi in the image)
 ```
 
 Stdin (`-`) works when you already have a file on the client side of a pipe; prefer a
