@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Resolve the running Fargate task and open a shell / print the admin URL.
+# Fargate stack ops: ECS Exec, admin URL, task IP, stack delete.
 #
 # Usage:
-#   ./deploy/fargate/relay-task.sh exec
-#   ./deploy/fargate/relay-task.sh admin          # print http://<ip>:8081
-#   ./deploy/fargate/relay-task.sh admin --open   # also open in the browser (macOS)
-#   ./deploy/fargate/relay-task.sh ip
-#   ./deploy/fargate/relay-task.sh task
+#   ./deploy/fargate/ops exec
+#   ./deploy/fargate/ops admin          # print http://<ip>:8081
+#   ./deploy/fargate/ops admin --open   # also open in the browser (macOS)
+#   ./deploy/fargate/ops ip
+#   ./deploy/fargate/ops task
+#   ./deploy/fargate/ops delete         # delete the CloudFormation stack
 #
 # Defaults (override with flags or env):
 #   --stack / RELAY_STACK / ENDCLOSE_RELAY_STACK  (default: endclose-relay)
@@ -19,6 +20,7 @@ STACK="${RELAY_STACK:-${ENDCLOSE_RELAY_STACK:-$STACK_DEFAULT}}"
 REGION="${RELAY_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
 CONTAINER="${RELAY_CONTAINER:-relay}"
 OPEN_BROWSER=0
+ASSUME_YES=0
 CMD=''
 
 usage() {
@@ -30,12 +32,14 @@ Commands:
   admin [--open]    Print admin UI URL (http://<private-ip>:8081)
   ip                Print the task private IPv4
   task              Print the running task ARN
+  delete [-y]       Delete the CloudFormation stack (EFS is retained)
 
 Options:
   --stack NAME      CloudFormation / ECS cluster+service name (default: ${STACK_DEFAULT})
   --region REGION   AWS region (prompted if omitted)
   --container NAME  Container name (default: relay)
   --open            With admin: open the URL (macOS \`open\`, else xdg-open)
+  -y, --yes         With delete: skip confirmation prompt
   -h, --help        Show this help
 
 Env defaults: RELAY_STACK, RELAY_REGION (or AWS_REGION), RELAY_CONTAINER
@@ -61,7 +65,7 @@ ask() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    exec|admin|ip|task)
+    exec|admin|ip|task|delete)
       [ -z "$CMD" ] || die "unexpected extra command: $1"
       CMD="$1"
       shift
@@ -70,6 +74,7 @@ while [ $# -gt 0 ]; do
     --region) REGION="$2"; shift 2 ;;
     --container) CONTAINER="$2"; shift 2 ;;
     --open) OPEN_BROWSER=1; shift ;;
+    -y|--yes) ASSUME_YES=1; shift ;;
     -h|--help) usage 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -111,6 +116,61 @@ task_private_ip() {
   printf '%s' "$ip"
 }
 
+delete_stack() {
+  local fs_id confirm=''
+  if ! aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then
+    die "stack not found: $STACK ($REGION)"
+  fi
+  fs_id="$(aws cloudformation describe-stacks \
+    --region "$REGION" \
+    --stack-name "$STACK" \
+    --query 'Stacks[0].Outputs[?OutputKey==`FileSystemId`].OutputValue | [0]' \
+    --output text 2>/dev/null || true)"
+  if [ "$fs_id" = None ] || [ "$fs_id" = null ]; then
+    fs_id=''
+  fi
+
+  cat >&2 <<EOF
+About to delete CloudFormation stack:
+  Stack:  $STACK
+  Region: $REGION
+EOF
+  if [ -n "$fs_id" ]; then
+    cat >&2 <<EOF
+  EFS:    $fs_id  (DeletionPolicy=Retain — NOT deleted with the stack)
+EOF
+  else
+    echo '  EFS:    (unknown — check for retained filesystems if you intended a full wipe)' >&2
+  fi
+  cat >&2 <<EOF
+
+Secrets Manager secrets are also not deleted by this command.
+EOF
+
+  if [ "$ASSUME_YES" -ne 1 ]; then
+    if [ ! -t 0 ]; then
+      die 'refusing to delete without -y/--yes in non-interactive mode'
+    fi
+    printf 'Type the stack name (%s) to confirm: ' "$STACK" >&2
+    IFS= read -r confirm || true
+    [ "$confirm" = "$STACK" ] || die 'confirmation did not match — aborted'
+  fi
+
+  echo "→ deleting stack $STACK in $REGION" >&2
+  aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
+  echo "→ waiting for delete to complete…" >&2
+  if ! aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"; then
+    die "stack delete failed — check events: aws cloudformation describe-stack-events --region $REGION --stack-name $STACK"
+  fi
+  echo "deleted $STACK" >&2
+  if [ -n "$fs_id" ]; then
+    cat >&2 <<EOF
+EFS $fs_id was retained. Delete it (and the secret) explicitly for a full wipe:
+  aws efs delete-file-system --region $REGION --file-system-id $fs_id
+EOF
+  fi
+}
+
 case "$CMD" in
   task)
     running_task
@@ -144,5 +204,8 @@ case "$CMD" in
       --container "$CONTAINER" \
       --interactive \
       --command '/bin/sh'
+    ;;
+  delete)
+    delete_stack
     ;;
 esac

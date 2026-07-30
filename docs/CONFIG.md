@@ -31,7 +31,7 @@ can never sit in the document silently doing nothing.
 | `RELAY_DB_PATH` | `/var/lib/endclose-relay/relay.db` | SQLite location (must be known before config can load) |
 | `RELAY_CONFIG` | `/etc/endclose-relay/relay.yaml` | first-boot seed file path |
 | `RELAY_SECRETS_FILE` | — | optional: load secrets from a mounted dotenv file |
-| `RELAY_ADMIN_URL` | `http://127.0.0.1:$RELAY_ADMIN_PORT` | override for `relayctl` (in-container CLI) |
+| `RELAY_ADMIN_URL` | `http://127.0.0.1:$RELAY_ADMIN_PORT` | override for [`relayctl`](./RELAYCTL.md) (in-container CLI) |
 | `RELAY_INGEST_PORT` / `RELAY_INGEST_HOST` | `8443` / `0.0.0.0` | webhook listener |
 | `RELAY_ADMIN_PORT` / `RELAY_ADMIN_HOST` | `8081` / `0.0.0.0` | admin UI/API (compose publishes host-loopback only) |
 | `RELAY_METRICS_PORT` / `RELAY_METRICS_HOST` | `9090` / `0.0.0.0` | Prometheus + `/healthz` `/readyz`; optional `METRICS_BASIC_AUTH` |

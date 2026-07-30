@@ -62,6 +62,7 @@ kept until replayed — never silently dropped.
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — install → Payabli setup → masking
   sign-off → go-live → operations runbooks.
 - **[docs/CONFIG.md](docs/CONFIG.md)** — the complete configuration reference.
+- **[docs/RELAYCTL.md](docs/RELAYCTL.md)** — in-container operator CLI (`relayctl`).
 
 ## Deployment
 

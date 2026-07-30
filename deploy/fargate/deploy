@@ -6,7 +6,7 @@
 #
 # Usage:
 #   cp deploy/fargate/secrets.example.env deploy/fargate/secrets.env   # fill in
-#   ./deploy/fargate/deploy.sh \
+#   ./deploy/fargate/deploy \
 #     --region eu-west-1 \
 #     --vpc vpc-xxx \
 #     --public-subnets subnet-a,subnet-b \
@@ -154,7 +154,10 @@ upsert_secret() {
       --region "$REGION" \
       --name "$SECRET_NAME" \
       --secret-string "$json" \
-      --tags "Key=Name,Value=${STACK}-relay" >/dev/null
+      --tags \
+        "Key=Name,Value=${STACK}-relay" \
+        "Key=Application,Value=endclose-relay" \
+        "Key=Component,Value=secrets" >/dev/null
   fi
 }
 
@@ -227,7 +230,11 @@ if aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >
     --stack-name "$STACK" \
     --template-body "file://${TEMPLATE}" \
     --capabilities CAPABILITY_IAM \
-    --parameters "file://${PARAMS_FILE}" 2>&1)"
+    --parameters "file://${PARAMS_FILE}" \
+    --tags \
+      "Key=Application,Value=endclose-relay" \
+      "Key=Name,Value=${STACK}" \
+      "Key=Component,Value=cloudformation-stack" 2>&1)"
   RC=$?
   set -e
   if [ "$RC" -ne 0 ]; then
@@ -255,7 +262,10 @@ else
     --template-body "file://${TEMPLATE}" \
     --capabilities CAPABILITY_IAM \
     --parameters "file://${PARAMS_FILE}" \
-    --tags "Key=Application,Value=endclose-relay" >/dev/null
+    --tags \
+      "Key=Application,Value=endclose-relay" \
+      "Key=Name,Value=${STACK}" \
+      "Key=Component,Value=cloudformation-stack" >/dev/null
   echo "→ waiting for CREATE_COMPLETE (EFS + service often ~5–10 minutes)"
   if ! aws cloudformation wait stack-create-complete --region "$REGION" --stack-name "$STACK"; then
     aws cloudformation describe-stack-events --region "$REGION" --stack-name "$STACK" \
@@ -309,9 +319,9 @@ Next steps:
 
   2. Admin / bootstrap — pick one (wrappers resolve the running task; stack defaults to endclose-relay):
        a) Tailscale/VPN (with --admin-cidr):
-            ./deploy/fargate/relay-task.sh admin --open
+            ./deploy/fargate/ops admin --open
        b) ECS Exec + relayctl (uses ADMIN_BASIC_AUTH from env; needs Session Manager plugin):
-            ./deploy/fargate/relay-task.sh exec
+            ./deploy/fargate/ops exec
             relayctl status
             relayctl config apply - < relay.yaml
 

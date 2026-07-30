@@ -148,15 +148,13 @@ payloads).
   then "replay all parked". Rejected-by-End-Close rows: contact us, then replay.
 - *Pause for a change window*: pause from the status tab (events keep buffering,
   nothing is lost), do your work, resume, watch the queue drain.
-- *No UI / ECS Exec*: the image includes **`relayctl`**, which talks to the local admin
-  API using `ADMIN_BASIC_AUTH` from the environment (no password prompt):
+- *No UI / ECS Exec*: the image includes **`relayctl`** — full command reference in
+  [`docs/RELAYCTL.md`](./RELAYCTL.md). Quick start:
   ```sh
   relayctl status
   relayctl config get -o /tmp/relay.yaml
-  # edit /tmp/relay.yaml, then:
-  relayctl config validate /tmp/relay.yaml
   relayctl config apply /tmp/relay.yaml
-  # or: relayctl config edit   # opens $EDITOR, then applies
+  # or: relayctl config edit
   relayctl killswitch pause|resume|panic
   ```
 - *Relay down longer than ~10 minutes*: Payabli only retries a failed delivery 2 times
@@ -172,7 +170,7 @@ payloads).
 configuration, buffered events, and audit history are untouched (verify anytime: config
 hash in the admin UI header is unchanged after an upgrade). Compose:
 `docker compose pull && docker compose up -d`. Fargate: re-run
-`deploy/fargate/deploy.sh` with the new `--image` (or rely on `:latest`). **Rollback**
+`deploy/fargate/deploy` with the new `--image` (or rely on `:latest`). **Rollback**
 to a previous image tag — config versions are forward-compatible within a major
 version. **Undeploy** stops the container/service but should leave the volume/EFS
 intact; deleting data is a separate, explicit step (`docker volume rm` or delete the

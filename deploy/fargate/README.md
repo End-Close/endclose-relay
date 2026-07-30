@@ -3,6 +3,20 @@
 Idempotent CloudFormation + helper script: one Fargate task, EFS (access point
 uid/gid `999`), public ALB for ingest `:8443`, admin `:8081` not on the ALB.
 
+Taggable resources are labelled so they are easy to spot in the AWS console and in
+cost reports:
+
+| Tag | Meaning |
+|---|---|
+| `Application` | always `endclose-relay` |
+| `Name` | `${ServiceName}` or `${ServiceName}-…` (e.g. `-alb`, `-data`) |
+| `Component` | what the resource is (`alb`, `efs-data`, `ecs-service`, …) |
+| `ManagedBy` | CloudFormation stack name |
+
+Security group descriptions and IAM role descriptions also say **End Close relay**.
+ECS service tags propagate to tasks (`PropagateTags: SERVICE`). EFS mount targets
+cannot be tagged by AWS.
+
 ## Prerequisites
 
 - AWS CLI v2 + `jq`
@@ -35,7 +49,7 @@ aws acm request-certificate \
 ```
 
 Use a hostname you control (a subdomain is fine). The ARN is what you pass to
-`deploy.sh` once the cert is **Issued**.
+`deploy` once the cert is **Issued**.
 
 ### 2. DNS validation CNAME (prove domain ownership)
 
@@ -63,7 +77,7 @@ has the ACM cert.
 
 ### 3. Traffic DNS (after deploy)
 
-When `deploy.sh` finishes it prints the **ALB DNS** name
+When `deploy` finishes it prints the **ALB DNS** name
 (`….elb.amazonaws.com`). Point your relay hostname at it:
 
 | DNS provider | Record |
@@ -88,9 +102,9 @@ cp deploy/fargate/secrets.example.env deploy/fargate/secrets.env
 ## Deploy
 
 ```sh
-chmod +x deploy/fargate/deploy.sh
+chmod +x deploy/fargate/deploy
 
-./deploy/fargate/deploy.sh \
+./deploy/fargate/deploy \
   --region eu-west-1 \
   --vpc vpc-xxxxxxxx \
   --public-subnets subnet-aaa,subnet-bbb \
@@ -123,11 +137,12 @@ fresh volume boots in bootstrap mode with ingest down until you apply config.
 1. Finish [traffic DNS](#3-traffic-dns-after-deploy) if you have not already.
 2. Bootstrap config — either open the admin UI on `:8081` (VPN / Tailscale) or
    ECS Exec + **`relayctl`** (in-image; uses `ADMIN_BASIC_AUTH`, no password prompt).
-   Use [`relay-task.sh`](./relay-task.sh) so you don’t chase the task ARN:
+   Use [`ops`](./ops) so you don’t chase the task ARN. Command reference:
+   [`docs/RELAYCTL.md`](../../docs/RELAYCTL.md).
 
    ```sh
-   ./deploy/fargate/relay-task.sh admin --open   # Tailscale → http://<ip>:8081
-   ./deploy/fargate/relay-task.sh exec          # ECS Exec shell
+   ./deploy/fargate/ops admin --open   # Tailscale → http://<ip>:8081
+   ./deploy/fargate/ops exec          # ECS Exec shell
    # then inside the container:
    relayctl status
    relayctl config apply /path/to/relay.yaml    # or: relayctl config edit
@@ -148,7 +163,8 @@ buffer survive. Deployment uses min healthy 0% / max 100% so only one writer run
 ## Tear down
 
 ```sh
-aws cloudformation delete-stack --stack-name endclose-relay --region eu-west-1
+./deploy/fargate/ops delete
+# or non-interactive: ./deploy/fargate/ops delete -y --region eu-west-1
 ```
 
 The **EFS filesystem is retained** (`DeletionPolicy: Retain`) so undeploy does not
