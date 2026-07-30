@@ -26,7 +26,8 @@
 #   customer_email: { source: CustomerEmail, transform: [trim, lowercase, hash] }
 # (transforms apply in order; hash is a keyed HMAC so End Close can match values it
 # never sees raw). Preview any route locally with:
-#   relayctl map preview --route <id> --sample <payload.json>
+#   relayctl config preview --route <id> --sample <payload.json>
+# (relayctl ships in the container — docker/ECS exec into the relay container.)
 
 # This document is ROUTES ONLY. The End Close endpoint, listener ports, and tuning are
 # environment settings with sensible defaults (override e.g. ENDCLOSE_BASE_URL for

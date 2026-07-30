@@ -21,9 +21,13 @@
     "dev:ui": "vite",
     "build": "tsc && mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/ && vite build",
     "start": "node dist/index.js",
+    "relayctl": "tsx src/cli/relayctl.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ui"
+  },
+  "bin": {
+    "relayctl": "./dist/cli/relayctl.js"
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",

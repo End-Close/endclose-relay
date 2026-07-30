@@ -10,7 +10,7 @@ function fileWith(content: string): string {
   return path
 }
 
-describe('secrets file loader (strict mode)', () => {
+describe('secrets file loader', () => {
   it('is a no-op when RELAY_SECRETS_FILE is unset or empty', () => {
     expect(loadSecretsFile({})).toEqual({ loaded: [] })
     expect(loadSecretsFile({ RELAY_SECRETS_FILE: '' })).toEqual({ loaded: [] })
@@ -39,7 +39,8 @@ describe('secrets file loader (strict mode)', () => {
   })
 
   it('fills unset AND empty-string env vars, but never overrides real values', () => {
-    // Distr passes blank template values through as "" — those must not shadow the file.
+    // Blank env values must not shadow the file (e.g. an empty placeholder in the
+    // process environment).
     const env: NodeJS.ProcessEnv = {
       RELAY_SECRETS_FILE: fileWith('A=from-file\nB=from-file\nC=from-file'),
       A: '',

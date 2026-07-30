@@ -1,12 +1,11 @@
 import { readFileSync } from 'node:fs'
 
-// Optional strict mode for secrets: when RELAY_SECRETS_FILE is set, load KEY=VALUE
-// pairs from that file into the environment. Exists for customers whose policy forbids
-// secrets on third-party infrastructure (the default Distr flow stores env values in
-// the hub database) — they mount a host file instead and leave the Distr values blank.
+// Optional secrets file: when RELAY_SECRETS_FILE is set, load KEY=VALUE pairs from that
+// path into the environment. Useful when secrets are mounted as a host file rather than
+// injected as real env vars.
 //
-// Precedence: a file value fills an env var that is unset OR empty. Empty matters:
-// Distr passes blank template values through as "" and those must not shadow the file.
+// Precedence: a file value fills an env var that is unset OR empty. Empty matters so a
+// blank placeholder in the process environment cannot shadow the file.
 
 export interface SecretsFileResult {
   loaded: string[]

@@ -58,8 +58,8 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
 
   const expectedAuth = 'Basic ' + Buffer.from(deps.basicAuth, 'utf8').toString('base64')
   app.addHook('onRequest', async (request, reply) => {
-    // Liveness stays unauthenticated: it drives the container healthcheck (and Distr's
-    // autoheal) in every mode and reveals only { ok, mode }.
+    // Liveness stays unauthenticated: it drives the container healthcheck in every mode
+    // and reveals only { ok, mode }.
     if (request.url === '/healthz') return
     const presented = Buffer.from(request.headers.authorization ?? '', 'utf8')
     const expected = Buffer.from(expectedAuth, 'utf8')

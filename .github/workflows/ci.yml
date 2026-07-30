@@ -30,5 +30,4 @@ jobs:
       - uses: actions/checkout@v5
       # Build only — publishing happens in the release workflow on tags.
       - run: docker build -t endclose-relay:ci .
-      # The compose file delivered via Distr must stay structurally valid.
-      - run: docker compose -f distr/docker-compose.yaml config -q
+      - run: docker compose -f docker-compose.yaml config -q
