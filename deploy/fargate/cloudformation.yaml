@@ -458,6 +458,14 @@ Resources:
       UnhealthyThresholdCount: 3
       Matcher:
         HttpCode: '200'
+      TargetGroupAttributes:
+        # Default is 300s, sized for draining long-lived connections; ingest is short
+        # webhook POSTs. DesiredCount is pinned to 1 (SQLite is single-writer) and
+        # MaximumPercent is 100, so ECS cannot start a replacement until the old task
+        # fully stops - and the old task cannot stop until this delay elapses. Every
+        # restart is therefore a hard outage on :8443, and this is its dominant term.
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
       Tags:
         - Key: Name
           Value: !Sub '${ServiceName}-ingest'
