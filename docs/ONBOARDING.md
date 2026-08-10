@@ -25,8 +25,9 @@ whole sandbox phase to take about an hour of hands-on time.
 - Create one data stream per route: `payabli_settlements_funded`,
   `payabli_batches_paid` (type `api`).
 - Property definitions for the mapped metadata fields (`batch_id`, `batch_number`,
-  `total_amount`, `return_amount`, `entry_point`, `paypoint`, `method`) so they are
-  validated and displayed in the dashboard.
+  `total_amount`, `return_amount`, `entry_point`, `paypoint` on settlements;
+  `method`, `paypoint` on batches) so they are validated and displayed in the
+  dashboard.
 - Issue an environment-scoped API key for the appliance (sandbox first, production at
   go-live).
 

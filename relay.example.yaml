@@ -77,5 +77,4 @@ routes:
       # No date: this payload carries no timestamp, so the record is dated by receive time.
       metadata:
         method: Method
-        entry_point: entryPoint
         paypoint: Paypoint

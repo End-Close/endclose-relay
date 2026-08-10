@@ -83,7 +83,6 @@ describe('mapEvent', () => {
     })
     expect(record.metadata).toEqual({
       method: 'ach',
-      entry_point: 'acme-main',
       paypoint: 'Acme Field Services',
     })
     expect(report.mapped['date']).toBe('(receive time)')
