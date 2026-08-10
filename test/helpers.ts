@@ -51,7 +51,6 @@ routes:
       direction: debit
       metadata:
         method: Method
-        entry_point: entryPoint
         paypoint: Paypoint
 `
 
