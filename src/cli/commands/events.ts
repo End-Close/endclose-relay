@@ -3,6 +3,7 @@ import { die, flagString, parseFlags, printJson } from '../io.js'
 
 /**
  *   relayctl events list [--status parked] [--route id] [--limit N]
+ *   relayctl events payload <id>
  *   relayctl events replay <id>
  *   relayctl events replay-parked
  */
@@ -11,6 +12,7 @@ export async function eventsCommand(client: AdminClient, argv: string[]): Promis
   if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
     console.log(`Usage:
   relayctl events list [--status <status>] [--route <id>] [--limit N]
+  relayctl events payload <id>
   relayctl events replay <id>
   relayctl events replay-parked`)
     return
@@ -21,6 +23,8 @@ export async function eventsCommand(client: AdminClient, argv: string[]): Promis
     case 'list':
     case 'ls':
       return eventsList(client, rest)
+    case 'payload':
+      return eventsPayload(client, rest)
     case 'replay':
       return eventsReplay(client, rest)
     case 'replay-parked':
@@ -64,6 +68,13 @@ async function eventsList(client: AdminClient, argv: string[]): Promise<void> {
       `${e.id}\t${e.status}\t${e.route_id}\t${e.event_type ?? '-'}\t${e.received_at}${err}`,
     )
   }
+}
+
+async function eventsPayload(client: AdminClient, argv: string[]): Promise<void> {
+  const id = argv[0]
+  if (!id) die('usage: relayctl events payload <id>')
+  const { data } = await client.get<{ payload: unknown }>(`/events/${id}/payload`)
+  printJson(data.payload)
 }
 
 async function eventsReplay(client: AdminClient, argv: string[]): Promise<void> {

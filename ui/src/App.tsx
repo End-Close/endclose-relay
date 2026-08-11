@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   fetchAudit,
+  fetchEventPayload,
   fetchEvents,
   fetchStatus,
   replayAllParked,
@@ -8,6 +9,7 @@ import {
   setKillswitch,
   setRoutePaused,
   type AuditRow,
+  type EventPayload,
   type EventSummary,
   type Status,
 } from './api.js'
@@ -143,6 +145,8 @@ const EVENT_STATUSES = ['', 'pending', 'retry', 'delivering', 'delivered', 'park
 function EventsTab({ routes }: { routes: string[] }) {
   const [status, setStatus] = useState('')
   const [route, setRoute] = useState('')
+  const [payloadView, setPayloadView] = useState<EventPayload | null>(null)
+  const [payloadError, setPayloadError] = useState<string | null>(null)
   const { data, error, refresh } = usePolled(
     () => fetchEvents({ ...(status && { status }), ...(route && { route }) }),
     [status, route],
@@ -157,6 +161,19 @@ function EventsTab({ routes }: { routes: string[] }) {
     const res = await replayAllParked()
     alert(`replayed ${res.replayed} event(s)`)
     refresh()
+  }
+  const viewPayload = async (id: number) => {
+    setPayloadError(null)
+    try {
+      setPayloadView(await fetchEventPayload(id))
+    } catch (e) {
+      setPayloadView(null)
+      setPayloadError((e as Error).message)
+    }
+  }
+  const copyPayload = () => {
+    if (!payloadView) return
+    void navigator.clipboard.writeText(JSON.stringify(payloadView.payload, null, 2))
   }
   return (
     <>
@@ -182,6 +199,7 @@ function EventsTab({ routes }: { routes: string[] }) {
           <button onClick={replayParked}>replay all parked</button>
         )}
         {error && <span className="text-bad">{error}</span>}
+        {payloadError && <span className="text-bad">{payloadError}</span>}
       </div>
       <table>
         <thead>
@@ -200,12 +218,34 @@ function EventsTab({ routes }: { routes: string[] }) {
               <td title={fmtTime(e.received_at)}>{fmtAgo(e.received_at)}</td>
               <td>{e.attempts}</td>
               <td className="max-w-96 break-words text-dim">{e.last_error ?? ''}</td>
-              <td>{e.status === 'parked' && <button onClick={() => replayOne(e.id)}>replay</button>}</td>
+              <td className="whitespace-nowrap">
+                <button onClick={() => void viewPayload(e.id)}>payload</button>{' '}
+                {e.status === 'parked' && <button onClick={() => replayOne(e.id)}>replay</button>}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       {data?.length === 0 && <div className="py-8 text-center text-dim">no events match</div>}
+      {payloadView && (
+        <div className="my-4 rounded border border-line bg-faint p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <strong>event #{payloadView.id}</strong>{' '}
+              <span className="text-dim">
+                {payloadView.route_id} · {payloadView.status} · decrypted locally — not sent to End Close
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={copyPayload}>copy json</button>
+              <button onClick={() => setPayloadView(null)}>close</button>
+            </div>
+          </div>
+          <pre className="panel max-h-96 overflow-auto whitespace-pre-wrap break-words">
+            {JSON.stringify(payloadView.payload, null, 2)}
+          </pre>
+        </div>
+      )}
     </>
   )
 }

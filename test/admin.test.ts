@@ -27,6 +27,7 @@ describe('admin API', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
     })
     ingest = buildIngestServer({
       db: setup.db,
@@ -131,6 +132,35 @@ describe('admin API', () => {
     expect((await post(`/events/${row!.id}/replay`)).statusCode).toBe(200)
     expect(events.getById(row!.id)!.status).toBe('retry')
     expect((await post(`/events/${row!.id}/replay`)).statusCode).toBe(409)
+  })
+
+  it('decrypts a stored payload for local inspection and audits the view', async () => {
+    await postWebhook()
+    const [row] = events.list({})
+    const res = await get(`/events/${row!.id}/payload`)
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.id).toBe(row!.id)
+    expect(body.route_id).toBe('payabli-settlements')
+    expect(body.payload.Event).toBe('TransferFunded')
+    expect(body.payload.transferId).toBe('trf_9f8e7d6c')
+    expect(body.headers).toMatchObject({ 'content-type': 'application/json' })
+
+    const audit = (await get('/audit')).json() as { action: string; detail_json: string }[]
+    const view = audit.find((a) => a.action === 'event.view_payload')
+    expect(view).toBeTruthy()
+    expect(JSON.parse(view!.detail_json)).toMatchObject({
+      event_id: row!.id,
+      route: 'payabli-settlements',
+    })
+
+    expect((await get('/events/999999/payload')).statusCode).toBe(404)
+
+    // Retention wipe → 410 Gone
+    setup.db
+      .prepare(`UPDATE events SET payload_enc = x'', payload_iv = x'' WHERE id = ?`)
+      .run(row!.id)
+    expect((await get(`/events/${row!.id}/payload`)).statusCode).toBe(410)
   })
 
   describe('config management', () => {
@@ -249,6 +279,7 @@ describe('recovery mode (stored config invalid)', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
       mode: 'bootstrap',
       configError: 'Unrecognized key(s) in object: endclose',
     })
@@ -293,6 +324,7 @@ describe('recovery mode (stored config invalid)', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
       mode: 'bootstrap',
       configError: 'Unrecognized key(s)',
     })
@@ -323,6 +355,7 @@ describe('bootstrap mode', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
       mode: 'bootstrap',
       onBootstrapApplied: () => applied++,
     })
@@ -362,6 +395,7 @@ describe('bootstrap mode', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
     })
     await admin.ready()
     expect((await admin.inject({ method: 'GET', url: '/healthz' })).json()).toEqual({

@@ -88,13 +88,15 @@ relayctl killswitch none         # same as resume
 
 ### `events`
 
-Browse the buffer and replay parked events. Payloads are never printed.
+Browse the buffer, inspect decrypted payloads locally, and replay parked events.
+Payload viewing is audited (`event.view_payload`); bodies never leave the appliance.
 
 ```sh
 relayctl events list
 relayctl events list --status parked --route payabli-settlements --limit 50
 relayctl events list --json
 
+relayctl events payload <id>     # print decrypted JSON (local only)
 relayctl events replay <id>
 relayctl events replay-parked
 ```

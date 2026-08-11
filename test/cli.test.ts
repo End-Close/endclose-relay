@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildAdminServer } from '../src/admin/server.js'
 import { AdminClient } from '../src/cli/client.js'
-import { MASKING_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
+import { MASKING_KEY, DATA_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
 import type { AddressInfo } from 'node:net'
 
 describe('relayctl admin client', () => {
@@ -17,6 +17,7 @@ describe('relayctl admin client', () => {
       startedAt: Date.now(),
       basicAuth: 'admin:hunter2',
       maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
       mode: 'bootstrap',
     })
     await admin.listen({ port: 0, host: '127.0.0.1' })

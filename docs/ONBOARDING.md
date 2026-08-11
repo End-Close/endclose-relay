@@ -145,8 +145,11 @@ payloads).
 **Runbooks:**
 
 - *Parked events* (events tab, filter status=parked): read `last_error`. Mapping
-  errors usually mean a payload-shape change — fix the map in the config tab, apply,
-  then "replay all parked". Rejected-by-End-Close rows: contact us, then replay.
+  errors usually mean a payload-shape change — open **payload** (or
+  `relayctl events payload <id>`) to inspect the stored webhook, fix the map in the
+  config tab, apply, then "replay all parked". Rejected-by-End-Close rows: contact us,
+  then replay. With `LOG_LEVEL=debug`, ingest also logs payload top-level keys (no
+  values) to help spot shape mismatches without decrypting.
 - *Pause for a change window*: pause from the status tab (events keep buffering,
   nothing is lost), do your work, resume, watch the queue drain.
 - *No UI / ECS Exec*: the image includes **`relayctl`** — full command reference in
@@ -181,5 +184,6 @@ EFS filesystem).
 
 - Incident contact: <ops@endclose.com>
 - When contacting us, include: the status tab contents (a screenshot is fine) and, if
-  relevant, the parked-events list. Never send payload contents — we don't want them,
-  and the UI never displays them.
+  relevant, the parked-events list and `last_error`. You can inspect a decrypted
+  payload locally (events tab → **payload**, or `relayctl events payload <id>`) to
+  fix mapping — do **not** send payload contents to End Close.
