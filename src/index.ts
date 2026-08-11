@@ -107,6 +107,7 @@ async function main(): Promise<void> {
       startedAt: Date.now(),
       basicAuth: adminAuth,
       maskingKey,
+      dataKey,
       mode: 'bootstrap',
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
       onBootstrapApplied: () => {
@@ -153,6 +154,7 @@ async function main(): Promise<void> {
     startedAt: Date.now(),
     basicAuth: adminAuth,
     maskingKey,
+    dataKey,
   })
   const metricsServer = buildMetricsServer({
     metrics,

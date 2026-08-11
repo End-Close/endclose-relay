@@ -56,7 +56,7 @@ log and the version history.
 |                                                                |                                           |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | Receive the mapped records you configured                      | ✅                                         |
-| See raw webhook payloads, unmapped fields, or hashed originals | ❌ no code path                            |
+| See raw webhook payloads, unmapped fields, or hashed originals | ❌ no: End Close never receives them. Operators can decrypt a buffered payload **on the appliance** (admin UI / `relayctl events payload`) — audited locally, never transmitted |
 | Reach into the appliance (any inbound connection)              | ❌ all connections are outbound            |
 | Flip killswitches, change config, or execute anything remotely | ❌ admin plane is host-local, credentialed by you |
 | See your processor credentials or the appliance's keys         | ❌ never transmitted or stored server-side |
@@ -126,7 +126,10 @@ whatever secret-management mechanism you already use: the End Close API key, pro
 webhook secrets, and the two appliance keys. Configuration references secrets **by
 env-var name only** — it contains no secret material and is safe to keep in your git. Secrets are never written to the relay's database, logs, or audit
 log. The logging layer only accepts scalar metadata by construction — there is no API
-for logging a payload. Missing secrets degrade safely: the UI banners any
+for logging a payload (shape metadata such as top-level keys may appear at
+`LOG_LEVEL=debug`). Operators may decrypt a buffered webhook **on the appliance** for
+debugging; that path is authenticated, audited, and never forwarded to End Close.
+Missing secrets degrade safely: the UI banners any
 config-referenced secret that isn't set, and a missing End Close API key means events
 buffer locally without forwarding — nothing is lost and nothing falls open.
 
@@ -164,11 +167,12 @@ remotely by End Close:
 | panic            | refused (HTTP 503) | stopped                | none within the processor's retry window |
 
 
-Every killswitch flip, config apply, and event replay is written to an **append-only
-audit log** with timestamp and detail — exportable as JSONL from the UI. Attribution is
-instance-level (the appliance records *that* an authenticated admin acted and *what*
-changed); per-person attribution, if you need it, comes from your own access records for
-the admin credential and host.
+Every killswitch flip, config apply, event replay, and **payload view** is written to an
+**append-only audit log** with timestamp and detail — exportable as JSONL from the UI.
+Attribution is instance-level (the appliance records *that* an authenticated admin acted
+and *what* changed); per-person attribution, if you need it, comes from your own access
+records for the admin credential and host. Payload-view audit entries record event id /
+route / status only — never the body.
 
 ## Container hardening
 
@@ -195,7 +199,8 @@ reviewed checkout.
 ## Questions this document should have answered
 
 - *What data leaves our network?* Only explicitly mapped fields; preview any payload in
-the UI's config tab; hard denylist on top.
+the UI's config tab; hard denylist on top. Buffered raw webhooks can be decrypted for
+local inspection by authenticated operators — they never leave the appliance.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin
 plane credentialed by you, read-only visibility limited to the records you send.
 - *Where does data live and for how long?* Encrypted SQLite on your volume; 7-day

@@ -10,6 +10,7 @@ import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
 import { log } from '../log.js'
+import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 
 // Headers persisted alongside the payload for debugging/replay. Auth headers are
 // deliberately excluded — secrets never reach the database.
@@ -96,6 +97,15 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     const eventId = adapter.extractEventId(body, raw, route)
     const eventType = adapter.extractEventType(body, raw, route)
     const filtered = route.events && !eventTypeMatches(route.events, eventType)
+    // Shape-only debug metadata (no values) — enable with LOG_LEVEL=debug.
+    log.debug('ingest shape', {
+      route: routeId,
+      event_type: eventType,
+      body_bytes: rawBody.length,
+      remote_ip: request.ip,
+      header_names: requestHeaderNames(request.headers as Record<string, unknown>),
+      payload_keys: jsonTopLevelKeys(body),
+    })
 
     const { ciphertext, iv } = encrypt(dataKey, rawBody)
     const headersJson = JSON.stringify(

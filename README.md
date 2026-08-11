@@ -31,8 +31,9 @@ own internal TLS proxy.
 
 - **status** — queues, killswitch state and controls (pause/resume/panic with
   confirmations), per-route pause toggles.
-- **events** — browse buffered/delivered/parked events (payloads are never shown);
-  replay parked events individually or in bulk.
+- **events** — browse buffered/delivered/parked events; decrypt a stored payload for
+  local inspection (audited; never sent to End Close); replay parked events
+  individually or in bulk.
 - **config** — the declarative YAML config, edited in place: validate against the
   schema, **preview exactly what would leave your network** for a sample payload
   (including every field that is *not* forwarded), apply, and browse/restore the full

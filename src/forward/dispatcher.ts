@@ -8,6 +8,7 @@ import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
 import { log } from '../log.js'
+import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { nextAttemptAt } from './backoff.js'
 import { mapEvent, MappingError, type EndCloseRecord } from './mapper.js'
 import {
@@ -118,17 +119,25 @@ export class Dispatcher {
     const records: EndCloseRecord[] = []
     const mapped: EventRow[] = []
     for (const event of claimed) {
+      let payloadKeys: string | undefined
+      let bodyBytes: number | undefined
       try {
-        const payload = JSON.parse(
-          decrypt(this.deps.dataKey, event.payload_enc, event.payload_iv).toString('utf8'),
-        ) as Json
+        const plaintext = decrypt(this.deps.dataKey, event.payload_enc, event.payload_iv)
+        bodyBytes = plaintext.length
+        const payload = JSON.parse(plaintext.toString('utf8')) as Json
+        payloadKeys = jsonTopLevelKeys(payload)
         records.push(mapEvent(route, payload, event.received_at, this.deps.maskingKey).record)
         mapped.push(event)
       } catch (err) {
         if (err instanceof MappingError) {
           this.events.markParked([event.id], `mapping failed: ${err.message}`)
           this.deps.metrics.forward(routeId, 'parked')
-          log.warn('event parked: mapping failed', { route: routeId, event_id: event.event_id })
+          log.warn('event parked: mapping failed', {
+            route: routeId,
+            event_id: event.event_id,
+            body_bytes: bodyBytes,
+            payload_keys: payloadKeys,
+          })
         } else {
           throw err
         }

@@ -111,6 +111,20 @@ export const setRoutePaused = (route: string, paused: boolean) =>
 export const replayEvent = (id: number) => post<{ replayed: number }>(`/events/${id}/replay`)
 export const replayAllParked = () => post<{ replayed: number }>('/events/replay-parked')
 
+export interface EventPayload {
+  id: number
+  route_id: string
+  event_id: string
+  event_type: string | null
+  status: string
+  received_at: string
+  last_error: string | null
+  headers: Record<string, unknown>
+  payload: unknown
+}
+
+export const fetchEventPayload = (id: number) => get<EventPayload>(`/events/${id}/payload`)
+
 export const fetchConfig = () => get<ConfigInfo>('/config')
 export const validateConfig = (yaml: string) => post<ValidationResult>('/config/validate', { yaml })
 export const saveConfig = (yaml: string) =>

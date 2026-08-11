@@ -18,6 +18,7 @@ import {
   saveConfig,
 } from '../config/store.js'
 import { mapEvent, MappingError } from '../forward/mapper.js'
+import { decrypt } from '../crypto/at-rest.js'
 import { isDbPathPersistent } from '../db/persistence.js'
 import type { Json } from '../mask/paths.js'
 import { VERSION } from '../version.js'
@@ -36,6 +37,8 @@ export interface AdminDeps {
   /** "user:password" — required. */
   basicAuth: string
   maskingKey: Buffer
+  /** Decrypts buffered webhook payloads for operator inspection (never leaves the appliance). */
+  dataKey: Buffer
   /** 'bootstrap' = no config yet: UI shows the setup editor; ingest is not running. */
   mode?: 'bootstrap' | 'running'
   /** Set when a STORED config failed validation at boot (recovery via the editor). */
@@ -169,6 +172,52 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       ...(q.route ? { route: q.route } : {}),
       limit: q.limit ? Number(q.limit) : 50,
     })
+  })
+
+  // Decrypt a buffered payload for local operator inspection. Audited; never forwarded
+  // to End Close. Retention may have wiped ciphertext on old delivered/filtered rows.
+  app.get('/events/:id/payload', async (request, reply) => {
+    const id = Number((request.params as { id: string }).id)
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: 'invalid event id' })
+    const row = events.getById(id)
+    if (!row) return reply.code(404).send({ error: 'event not found' })
+    if (!row.payload_enc || row.payload_enc.length === 0) {
+      return reply.code(410).send({ error: 'payload wiped by retention' })
+    }
+    let plaintext: Buffer
+    try {
+      plaintext = decrypt(deps.dataKey, row.payload_enc, row.payload_iv)
+    } catch {
+      return reply.code(500).send({ error: 'decrypt failed' })
+    }
+    let payload: Json
+    try {
+      payload = JSON.parse(plaintext.toString('utf8')) as Json
+    } catch {
+      return reply.code(500).send({ error: 'payload is not valid JSON' })
+    }
+    let headers: Record<string, unknown> = {}
+    try {
+      headers = JSON.parse(row.headers_json) as Record<string, unknown>
+    } catch {
+      headers = {}
+    }
+    audit.log(ACTOR, 'event.view_payload', {
+      event_id: id,
+      route: row.route_id,
+      status: row.status,
+    })
+    return {
+      id: row.id,
+      route_id: row.route_id,
+      event_id: row.event_id,
+      event_type: row.event_type,
+      status: row.status,
+      received_at: row.received_at,
+      last_error: row.last_error,
+      headers,
+      payload,
+    }
   })
 
   app.post('/events/:id/replay', async (request, reply) => {

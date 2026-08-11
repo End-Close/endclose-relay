@@ -41,7 +41,7 @@ can never sit in the document silently doing nothing.
 | `RELAY_PARK_AFTER_MS` | 7 days | retrying events park (never dropped) after this |
 | `RELAY_RETENTION_DELIVERED_DAYS` | `7` | payloads of delivered/filtered events wiped after |
 | `RELAY_RETENTION_LEDGER_DAYS` | `30` | their rows (idempotency ledger) deleted after |
-| `LOG_LEVEL` | `info` | pino level |
+| `LOG_LEVEL` | `info` | pino level (`debug` adds ingest shape metadata: payload keys, body size, header names — never values) |
 
 ## Routes
 
