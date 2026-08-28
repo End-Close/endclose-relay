@@ -211,4 +211,41 @@ describe('ingest → store → forward', () => {
     expect((await post('payabli-settlements', settlementBody)).statusCode).toBe(503)
     expect(events.countByStatus()).toEqual({})
   })
+
+  it('returns 503 when persist hits SQLITE_BUSY after retries', async () => {
+    const orig = EventsRepo.prototype.insert
+    EventsRepo.prototype.insert = () => {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' })
+    }
+    try {
+      const res = await post('payabli-settlements', settlementBody)
+      expect(res.statusCode).toBe(503)
+      expect(JSON.parse(res.body).error).toBe('temporarily unavailable')
+      expect(events.countByStatus()).toEqual({})
+    } finally {
+      EventsRepo.prototype.insert = orig
+    }
+  })
+
+  it('releases leftover delivering events when settle cannot persist', async () => {
+    const origDelivered = EventsRepo.prototype.markDelivered
+    const origFailed = EventsRepo.prototype.markFailed
+    const locked = () => Object.assign(new Error('database is locked'), { code: 'SQLITE_IOERR' })
+    EventsRepo.prototype.markDelivered = () => {
+      throw locked()
+    }
+    EventsRepo.prototype.markFailed = () => {
+      throw locked()
+    }
+    try {
+      expect((await post('payabli-settlements', settlementBody)).statusCode).toBe(200)
+      await waitFor(() => {
+        const counts = events.countByStatus()
+        return (counts.retry ?? 0) === 1 && (counts.delivering ?? 0) === 0
+      })
+    } finally {
+      EventsRepo.prototype.markDelivered = origDelivered
+      EventsRepo.prototype.markFailed = origFailed
+    }
+  })
 })
