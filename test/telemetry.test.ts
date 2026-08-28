@@ -29,8 +29,7 @@ const sampleSnap: HeartbeatSnapshot = buildHeartbeatSnapshot('0.9.0', Date.now()
   queue: { pending: 2 },
   dbBytes: 1024,
   persistent: true,
-  configHash: 'sha256:abc',
-  configYaml: 'routes:\n  - id: payabli-settlements\n',
+  config: 'routes:\n  - id: payabli-settlements\n',
   routes: [
     {
       id: 'payabli-settlements',
@@ -67,10 +66,10 @@ describe('pickEventProperties', () => {
 })
 
 describe('buildHeartbeatSnapshot', () => {
-  it('emits only allowlisted heartbeat keys and includes config yaml', () => {
+  it('emits only allowlisted heartbeat keys and includes config', () => {
     expect(new Set(Object.keys(sampleSnap))).toEqual(new Set(EVENT_KEYS.relay_heartbeat))
-    expect(sampleSnap.config_yaml).toContain('routes:')
-    expect(sampleSnap.config_yaml).not.toMatch(/Bearer |sk_|password\s*=/i)
+    expect(sampleSnap.config).toContain('routes:')
+    expect(sampleSnap.config).not.toMatch(/Bearer |sk_|password\s*=/i)
     expect(sampleSnap.queue.pending).toBe(2)
     expect(sampleSnap.queue.parked).toBe(0)
     expect(sampleSnap.routes[0]?.oldest_pending_age_s).toBeGreaterThanOrEqual(10)

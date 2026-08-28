@@ -111,7 +111,7 @@ async function main(): Promise<void> {
       })
       const raw = readActiveConfigRaw(db)
       telemetry.captureError('config_invalid', new Error(state.error), {
-        ...(raw?.yamlText ? { config_yaml: raw.yamlText } : {}),
+        ...(raw?.yamlText ? { config: raw.yamlText } : {}),
       })
     } else {
       log.warn('no configuration — bootstrap mode: admin UI on :8081, webhooks NOT accepted')
@@ -210,8 +210,7 @@ async function main(): Promise<void> {
     persistent: isDbPathPersistent(dbPath),
     route_count: config.routes.length,
     has_api_key: Boolean(apiKey),
-    config_hash: loaded.hash,
-    config_yaml: loaded.yamlText,
+    config: loaded.yamlText,
   })
 
   let shuttingDown = false

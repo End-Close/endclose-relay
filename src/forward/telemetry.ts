@@ -25,7 +25,7 @@ export type TelemetryEventName =
   | 'relay_batch_parked'
 
 export const EVENT_KEYS: Record<TelemetryEventName, readonly string[]> = {
-  relay_boot: ['version', 'mode', 'persistent', 'route_count', 'has_api_key', 'config_hash', 'config_yaml'],
+  relay_boot: ['version', 'mode', 'persistent', 'route_count', 'has_api_key', 'config'],
   relay_heartbeat: [
     'version',
     'uptime_s',
@@ -33,14 +33,13 @@ export const EVENT_KEYS: Record<TelemetryEventName, readonly string[]> = {
     'queue',
     'db_bytes',
     'persistent',
-    'config_hash',
-    'config_yaml',
+    'config',
     'routes',
   ],
-  relay_error: ['version', 'kind', 'message', 'stack', 'op', 'route', 'config_yaml', 'missing'],
+  relay_error: ['version', 'kind', 'message', 'stack', 'op', 'route', 'config', 'missing'],
   relay_shutdown: ['version', 'signal', 'uptime_s'],
   relay_killswitch: ['version', 'before', 'after'],
-  relay_config_applied: ['version', 'config_hash', 'config_yaml'],
+  relay_config_applied: ['version', 'config'],
   relay_batch_parked: ['version', 'route', 'status', 'events'],
 }
 
@@ -82,8 +81,7 @@ export interface HeartbeatSnapshot {
   queue: Record<string, number>
   db_bytes: number
   persistent: boolean | null
-  config_hash: string | null
-  config_yaml: string | null
+  config: string | null
   routes: HeartbeatRoute[]
 }
 
@@ -132,8 +130,7 @@ export function buildHeartbeatSnapshot(
     queue: Record<string, number>
     dbBytes: number
     persistent: boolean | null
-    configHash: string | null
-    configYaml: string | null
+    config: string | null
     routes: Array<{
       id: string
       source: string
@@ -154,8 +151,7 @@ export function buildHeartbeatSnapshot(
     queue,
     db_bytes: src.dbBytes,
     persistent: src.persistent,
-    config_hash: src.configHash,
-    config_yaml: src.configYaml,
+    config: src.config,
     routes: src.routes.map((r) => ({
       id: r.id,
       source: r.source,
@@ -175,9 +171,6 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
   const kv = new KvRepo(db)
   const routes = new RoutesRepo(db)
   const stats = new Map(events.perRouteStats().map((s) => [s.route_id, s]))
-  const current = db
-    .prepare('SELECT config_hash FROM config_versions ORDER BY id DESC LIMIT 1')
-    .get() as { config_hash: string } | undefined
   let dbBytes = 0
   try {
     dbBytes = statSync(dbPath).size
@@ -189,8 +182,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
     queue: events.countByStatus(),
     dbBytes,
     persistent: isDbPathPersistent(dbPath),
-    configHash: current?.config_hash ?? null,
-    configYaml: readActiveConfigRaw(db)?.yamlText ?? null,
+    config: readActiveConfigRaw(db)?.yamlText ?? null,
     routes: routes.all().map((r) => {
       const s = stats.get(r.id)
       return {
@@ -258,7 +250,7 @@ export class Telemetry {
   captureError(
     kind: TelemetryKind,
     err: unknown,
-    extra: { op?: string; route?: string; config_yaml?: string; missing?: string } = {},
+    extra: { op?: string; route?: string; config?: string; missing?: string } = {},
   ): void {
     if (!this.allowError()) return
     const { message, stack } = sanitizeError(err)
@@ -268,7 +260,7 @@ export class Telemetry {
       stack,
       ...(extra.op ? { op: extra.op } : {}),
       ...(extra.route ? { route: extra.route } : {}),
-      ...(extra.config_yaml ? { config_yaml: extra.config_yaml } : {}),
+      ...(extra.config ? { config: extra.config } : {}),
       ...(extra.missing ? { missing: extra.missing } : {}),
     })
   }

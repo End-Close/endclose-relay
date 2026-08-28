@@ -285,8 +285,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       return reply.code(422).send({ error: (err as Error).message })
     }
     deps.telemetry?.capture('relay_config_applied', {
-      config_hash: loaded.hash,
-      config_yaml: yaml,
+      config: yaml,
     })
     if (mode === 'bootstrap') {
       // Recovery (stored config was invalid): come back up PAUSED. The repair was

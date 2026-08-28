@@ -103,7 +103,7 @@ events to `api.endclose.com/v1/relays/events` (same egress and key as record
 forwarding). End Close attributes them to your company. **Never sent:** webhook
 payloads, event IDs, `last_error` text, secret values, hostnames, or the database
 path. **Sent:** `relay_boot`, periodic `relay_heartbeat` (queue depths, killswitch,
-config YAML + hash, per-route counts), `relay_error` (kind, truncated message,
+config YAML, per-route counts), `relay_error` (kind, truncated message,
 sanitized stack — Bearer/Basic/API-key substrings redacted), `relay_shutdown`,
 `relay_killswitch`, `relay_config_applied` (full routes YAML; it names env vars, not
 values), `relay_batch_parked` (route id, HTTP status, count). Errors are capped at 20
@@ -212,7 +212,7 @@ reviewed checkout.
 the UI's config tab; hard denylist on top. Buffered raw webhooks can be decrypted for
 local inspection by authenticated operators — they never leave the appliance. The
 operational call-home (same `api.endclose.com` egress) sends queue gauges, the routes
-config YAML, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
+config, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin
 plane credentialed by you, read-only visibility limited to the records you send.
 - *Where does data live and for how long?* Encrypted SQLite on your volume; 7-day
