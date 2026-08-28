@@ -158,7 +158,9 @@ Resources:
     Properties:
       Encrypted: true
       PerformanceMode: generalPurpose
-      ThroughputMode: bursting
+      # Elastic: pay for throughput used. Bursting credits exhaust under
+      # synchronous=FULL SQLite commits and surface as SQLITE_BUSY on EFS.
+      ThroughputMode: elastic
       FileSystemTags:
         - Key: Name
           Value: !Sub '${ServiceName}-data'

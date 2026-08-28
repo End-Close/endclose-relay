@@ -73,9 +73,9 @@ export class EventsRepo {
         const ids = rows.map((r) => r.id)
         this.db
           .prepare(
-            `UPDATE events SET status = 'delivering' WHERE id IN (${ids.map(() => '?').join(',')})`,
+            `UPDATE events SET status = 'delivering', next_attempt_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
           )
-          .run(...ids)
+          .run(now, ...ids)
       }
       return rows
     })
@@ -117,6 +117,22 @@ export class EventsRepo {
     return this.db
       .prepare(`UPDATE events SET status = 'retry', next_attempt_at = ? WHERE status = 'delivering'`)
       .run(now).changes
+  }
+
+  /**
+   * Return leftover 'delivering' rows to 'retry' without touching already-settled rows.
+   * Used when a dispatch batch throws after claimDue. Increments attempts so a persist
+   * failure after a successful POST backs off instead of tight-looping.
+   */
+  releaseDelivering(ids: number[], nextAttemptAt: string, error: string): number {
+    if (ids.length === 0) return 0
+    return this.db
+      .prepare(
+        `UPDATE events SET status = 'retry', attempts = attempts + 1,
+           next_attempt_at = ?, last_error = ?
+         WHERE status = 'delivering' AND id IN (${ids.map(() => '?').join(',')})`,
+      )
+      .run(nextAttemptAt, error.slice(0, 500), ...ids).changes
   }
 
   routesWithDueEvents(now: string): string[] {
@@ -235,22 +251,63 @@ export class EventsRepo {
    * `ledgerDays`. Parked events are never touched — they are unresolved by definition.
    */
   prune(now: string, deliveredDays: number, ledgerDays: number): { wiped: number; deleted: number } {
+    let wiped = 0
+    let deleted = 0
+    for (;;) {
+      const batch = this.pruneBatch(now, deliveredDays, ledgerDays, 500)
+      wiped += batch.wiped
+      deleted += batch.deleted
+      if (batch.wiped === 0 && batch.deleted === 0) break
+    }
+    return { wiped, deleted }
+  }
+
+  /**
+   * One short exclusive lock: wipe a limited set of expired payloads, or delete a
+   * limited set of expired ledger rows, not both. Caller loops (and yields) so ingest
+   * and dispatch can run between batches on EFS.
+   */
+  pruneBatch(
+    now: string,
+    deliveredDays: number,
+    ledgerDays: number,
+    limit: number,
+  ): { wiped: number; deleted: number } {
     const wipeCutoff = new Date(Date.parse(now) - deliveredDays * 86_400_000).toISOString()
     const deleteCutoff = new Date(Date.parse(now) - ledgerDays * 86_400_000).toISOString()
-    const wiped = this.db
-      .prepare(
-        `UPDATE events SET payload_enc = x'', payload_iv = x'', headers_json = '{}'
-         WHERE status IN ('delivered','dropped_by_filter')
-           AND received_at < ? AND length(payload_enc) > 0`,
-      )
-      .run(wipeCutoff).changes
+    const wipeIds = (
+      this.db
+        .prepare(
+          `SELECT id FROM events
+           WHERE status IN ('delivered','dropped_by_filter')
+             AND received_at < ? AND length(payload_enc) > 0
+           LIMIT ?`,
+        )
+        .all(wipeCutoff, limit) as { id: number }[]
+    ).map((r) => r.id)
+    if (wipeIds.length > 0) {
+      const wiped = this.db
+        .prepare(
+          `UPDATE events SET payload_enc = x'', payload_iv = x'', headers_json = '{}'
+           WHERE id IN (${wipeIds.map(() => '?').join(',')})`,
+        )
+        .run(...wipeIds).changes
+      return { wiped, deleted: 0 }
+    }
+    const deleteIds = (
+      this.db
+        .prepare(
+          `SELECT id FROM events
+           WHERE status IN ('delivered','dropped_by_filter') AND received_at < ?
+           LIMIT ?`,
+        )
+        .all(deleteCutoff, limit) as { id: number }[]
+    ).map((r) => r.id)
+    if (deleteIds.length === 0) return { wiped: 0, deleted: 0 }
     const deleted = this.db
-      .prepare(
-        `DELETE FROM events
-         WHERE status IN ('delivered','dropped_by_filter') AND received_at < ?`,
-      )
-      .run(deleteCutoff).changes
-    return { wiped, deleted }
+      .prepare(`DELETE FROM events WHERE id IN (${deleteIds.map(() => '?').join(',')})`)
+      .run(...deleteIds).changes
+    return { wiped: 0, deleted }
   }
 }
 

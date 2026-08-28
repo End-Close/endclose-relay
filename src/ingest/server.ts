@@ -5,6 +5,7 @@ import type { Db } from '../db/db.js'
 import { EventsRepo } from '../db/repo/events.js'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { KvRepo } from '../db/repo/kv.js'
+import { INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from '../db/busy.js'
 import { encrypt } from '../crypto/at-rest.js'
 import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
@@ -114,19 +115,33 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
       ),
     )
 
-    const insertedId = events.insert({
-      route_id: routeId,
-      source: route.source,
-      event_id: eventId,
-      event_type: eventType,
-      payload_enc: ciphertext,
-      payload_iv: iv,
-      headers_json: headersJson,
-      received_at: new Date().toISOString(),
-      status: filtered ? 'dropped_by_filter' : 'pending',
-      idempotency_key:
-        'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
-    })
+    let insertedId: number | null
+    try {
+      insertedId = await withBusyRetry(
+        'insert',
+        () =>
+          events.insert({
+            route_id: routeId,
+            source: route.source,
+            event_id: eventId,
+            event_type: eventType,
+            payload_enc: ciphertext,
+            payload_iv: iv,
+            headers_json: headersJson,
+            received_at: new Date().toISOString(),
+            status: filtered ? 'dropped_by_filter' : 'pending',
+            idempotency_key:
+              'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
+          }),
+        { attempts: INGEST_BUSY_RETRY_ATTEMPTS },
+      )
+    } catch (err) {
+      log.error('ingest persist failed', { route: routeId, error: (err as Error).message })
+      const retryable = isSqliteBusy(err)
+      return reply
+        .code(retryable ? 503 : 500)
+        .send({ error: retryable ? 'temporarily unavailable' : 'internal error' })
+    }
 
     if (insertedId === null) {
       metrics.ingest(routeId, 'duplicate')

@@ -497,4 +497,54 @@ describe('retention pruning', () => {
     expect(ids).toContain('old-parked')
     db.close()
   })
+
+  it('pruneBatch wipes before deleting and respects the row limit', () => {
+    const { db } = setupDb()
+    const events = new EventsRepo(db)
+    const insert = (id: string, receivedAt: string) => {
+      db.prepare(
+        `INSERT INTO events (route_id, source, event_id, event_type, payload_enc, payload_iv,
+           headers_json, received_at, status, idempotency_key)
+         VALUES ('r', 'payabli', ?, 'T', x'deadbeef', x'0102', '{}', ?, 'delivered', ?)`,
+      ).run(id, receivedAt, `k-${id}`)
+    }
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
+    insert('a', daysAgo(10))
+    insert('b', daysAgo(10))
+    insert('c', daysAgo(40))
+    const now = new Date().toISOString()
+    expect(events.pruneBatch(now, 7, 30, 1)).toEqual({ wiped: 1, deleted: 0 })
+    expect(events.pruneBatch(now, 7, 30, 10)).toEqual({ wiped: 2, deleted: 0 })
+    expect(events.pruneBatch(now, 7, 30, 10)).toEqual({ wiped: 0, deleted: 1 })
+    expect(events.pruneBatch(now, 7, 30, 10)).toEqual({ wiped: 0, deleted: 0 })
+    db.close()
+  })
+})
+
+describe('delivering recovery', () => {
+  it('releaseDelivering returns only delivering rows to retry', () => {
+    const { db } = setupDb()
+    const events = new EventsRepo(db)
+    db.prepare(
+      `INSERT INTO events (route_id, source, event_id, event_type, payload_enc, payload_iv,
+         headers_json, received_at, status, attempts, next_attempt_at, idempotency_key)
+       VALUES ('r', 'payabli', 'e1', 'T', x'dead', x'01', '{}', ?, 'delivering', 0, ?, 'k1'),
+              ('r', 'payabli', 'e2', 'T', x'dead', x'01', '{}', ?, 'delivered', 0, ?, 'k2')`,
+    ).run(new Date().toISOString(), new Date().toISOString(), new Date().toISOString(), new Date().toISOString())
+    const ids = db.prepare('SELECT id FROM events ORDER BY id').all() as { id: number }[]
+    const n = events.releaseDelivering(
+      ids.map((r) => r.id),
+      new Date().toISOString(),
+      'left delivering after batch',
+    )
+    expect(n).toBe(1)
+    const rows = db
+      .prepare('SELECT event_id, status, attempts FROM events ORDER BY event_id')
+      .all() as { event_id: string; status: string; attempts: number }[]
+    expect(rows).toEqual([
+      { event_id: 'e1', status: 'retry', attempts: 1 },
+      { event_id: 'e2', status: 'delivered', attempts: 0 },
+    ])
+    db.close()
+  })
 })
