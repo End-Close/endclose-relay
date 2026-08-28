@@ -8,6 +8,7 @@ import { withBusyRetry } from '../db/busy.js'
 import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
+import type { Telemetry } from './telemetry.js'
 import { log } from '../log.js'
 import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { nextAttemptAt } from './backoff.js'
@@ -34,6 +35,7 @@ export interface DispatcherDeps {
   maskingKey: Buffer
   signal: EventEmitter
   metrics: Metrics
+  telemetry?: Telemetry
 }
 
 export class Dispatcher {
@@ -63,6 +65,7 @@ export class Dispatcher {
     } catch (err) {
       this.needsRecover = true
       log.error('boot recover delivering failed', { error: (err as Error).message })
+      this.deps.telemetry?.captureError('recover_delivering', err)
     }
 
     this.deps.signal.on('event', () => this.wake())
@@ -95,6 +98,7 @@ export class Dispatcher {
             error: (err as Error).message,
             ...(op ? { op } : {}),
           })
+          this.deps.telemetry?.captureError('dispatch_cycle', err, op ? { op } : {})
         }
       }
     })
@@ -111,6 +115,7 @@ export class Dispatcher {
         if (recovered > 0) log.warn('recovered stuck delivering events', { count: recovered })
       } catch (err) {
         log.error('recover delivering failed', { error: (err as Error).message })
+        this.deps.telemetry?.captureError('recover_delivering', err)
       }
     }
 
@@ -194,6 +199,11 @@ export class Dispatcher {
         )
         this.deps.metrics.forward(routeId, 'parked', ids.length)
         log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
+        this.deps.telemetry?.capture('relay_batch_parked', {
+          route: routeId,
+          status: err.status,
+          events: ids.length,
+        })
       } else {
         // Transient network failure, 5xx, or auth problem (fixable server-side or in
         // config): schedule redelivery with backoff. attempts is per-event.
@@ -321,6 +331,7 @@ export class Dispatcher {
       // Prune must not block forwarding. lastPruneAt used to be set before prune()
       // ran, so a lock error skipped both dispatch and the next hour of retention.
       log.error('retention prune failed', { error: (err as Error).message })
+      this.deps.telemetry?.captureError('prune', err)
     }
   }
 
@@ -339,6 +350,7 @@ export class Dispatcher {
         error: (err as Error).message,
         count: ids.length,
       })
+      this.deps.telemetry?.captureError('recover_delivering', err)
     }
   }
 

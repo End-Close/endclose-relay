@@ -23,6 +23,7 @@ import { isDbPathPersistent } from '../db/persistence.js'
 import type { Json } from '../mask/paths.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
+import type { Telemetry } from '../forward/telemetry.js'
 
 // The admin plane is the single management surface (UI + API). Basic auth is mandatory;
 // mutations additionally reject cross-site browser requests. Attribution is
@@ -45,6 +46,7 @@ export interface AdminDeps {
   configError?: string
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
+  telemetry?: Telemetry
 }
 
 export function buildAdminServer(deps: AdminDeps): FastifyInstance {
@@ -152,6 +154,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     kv.setGlobalKillswitch(state as GlobalKillswitch)
     audit.log(ACTOR, 'killswitch.' + state, { before })
     log.warn('killswitch changed', { before, after: state })
+    deps.telemetry?.capture('relay_killswitch', { before, after: state })
     return { global: state }
   })
 
@@ -281,6 +284,9 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     } catch (err) {
       return reply.code(422).send({ error: (err as Error).message })
     }
+    deps.telemetry?.capture('relay_config_applied', {
+      config: yaml,
+    })
     if (mode === 'bootstrap') {
       // Recovery (stored config was invalid): come back up PAUSED. The repair was
       // hand-edited under pressure and a backlog may be waiting — hold egress until an

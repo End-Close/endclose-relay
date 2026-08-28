@@ -97,8 +97,18 @@ auto-restart never fights an operator mid-configuration.
 - **Metrics** `:9090`**:** not published by default. If you opt in, it exposes operational
 counters only (no payload data), with optional basic auth (`METRICS_BASIC_AUTH`).
 - **Egress allowlist for your firewall:** `api.endclose.com:443`, plus your image
-registry for pulls (`ghcr.io`). Nothing else. No telemetry, no phone-home from the
-relay itself.
+registry for pulls (`ghcr.io`). Nothing else.
+- **Operational call-home:** when `ENDCLOSE_API_KEY` is set, the relay POSTs named
+events to `api.endclose.com/v1/relays/events` (same egress and key as record
+forwarding). End Close attributes them to your company. **Never sent:** webhook
+payloads, event IDs, `last_error` text, secret values, hostnames, or the database
+path. **Sent:** `relay_boot`, periodic `relay_heartbeat` (queue depths, killswitch,
+config YAML, per-route counts), `relay_error` (kind, truncated message,
+sanitized stack — Bearer/Basic/API-key substrings redacted), `relay_shutdown`,
+`relay_killswitch`, `relay_config_applied` (full routes YAML; it names env vars, not
+values), `relay_batch_parked` (route id, HTTP status, count). Errors are capped at 20
+per minute. Disable with `RELAY_TELEMETRY=off`. A 404 until the API endpoint exists
+does not affect ingest or dispatch.
 
 
 
@@ -200,7 +210,9 @@ reviewed checkout.
 
 - *What data leaves our network?* Only explicitly mapped fields; preview any payload in
 the UI's config tab; hard denylist on top. Buffered raw webhooks can be decrypted for
-local inspection by authenticated operators — they never leave the appliance.
+local inspection by authenticated operators — they never leave the appliance. The
+operational call-home (same `api.endclose.com` egress) sends queue gauges, the routes
+config, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin
 plane credentialed by you, read-only visibility limited to the records you send.
 - *Where does data live and for how long?* Encrypted SQLite on your volume; 7-day
