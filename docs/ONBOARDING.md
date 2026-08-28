@@ -11,7 +11,8 @@ whole sandbox phase to take about an hour of hands-on time.
   webhooks (typically behind your own TLS terminator / load balancer on 443 → relay
   :8443).
 - Egress allowed to `api.endclose.com:443` and your image registry. Nothing else is
-  needed (see `docs/SECURITY.md`).
+  needed (see `docs/SECURITY.md`). The relay POSTs operational events (boot, heartbeat,
+  errors) to that same API; set `RELAY_TELEMETRY=off` if you do not want that.
 - Five secrets provided to the relay container as **environment variables**, through
   whatever mechanism you normally use for secrets (your secret manager's env injection,
   Compose `env_file`, systemd credentials, …): `ENDCLOSE_API_KEY` (issued by End Close),

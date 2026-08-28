@@ -64,10 +64,15 @@ export class EndCloseClient {
     >
   }
 
+  /** Operational call-home. Failures must never affect ingest or dispatch. */
+  async postRelayEvent(event: { name: string; properties: Record<string, unknown> }): Promise<void> {
+    await this.request('POST', '/relays/events', { body: event, timeoutMs: 5_000 })
+  }
+
   private async request(
     method: string,
     path: string,
-    opts: { idempotencyKey?: string; body?: unknown },
+    opts: { idempotencyKey?: string; body?: unknown; timeoutMs?: number },
   ): Promise<unknown> {
     const headers: Record<string, string> = {
       'X-API-KEY': this.apiKey,
@@ -81,7 +86,7 @@ export class EndCloseClient {
         method,
         headers,
         body: opts.body === undefined ? null : JSON.stringify(opts.body),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
       })
     } catch (err) {
       throw new TransientHttpError(`network error: ${(err as Error).message}`)

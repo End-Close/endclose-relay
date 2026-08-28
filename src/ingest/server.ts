@@ -10,6 +10,7 @@ import { encrypt } from '../crypto/at-rest.js'
 import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
+import type { Telemetry } from '../forward/telemetry.js'
 import { log } from '../log.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 
@@ -23,6 +24,7 @@ export interface IngestDeps {
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal: EventEmitter
   metrics: Metrics
+  telemetry?: Telemetry
 }
 
 function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
@@ -38,7 +40,7 @@ function escapeRe(s: string): string {
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const { db, dataKey, signal, metrics } = deps
+  const { db, dataKey, signal, metrics, telemetry } = deps
   const events = new EventsRepo(db)
   const routes = new RoutesRepo(db)
   const kv = new KvRepo(db)
@@ -137,6 +139,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
       )
     } catch (err) {
       log.error('ingest persist failed', { route: routeId, error: (err as Error).message })
+      telemetry?.captureError('ingest_persist', err, { route: routeId })
       const retryable = isSqliteBusy(err)
       return reply
         .code(retryable ? 503 : 500)

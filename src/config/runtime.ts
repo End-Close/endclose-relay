@@ -20,6 +20,7 @@ export interface RuntimeSettings {
     delivered_days: number
     ledger_days: number
   }
+  telemetry: { enabled: boolean }
 }
 
 function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -59,5 +60,12 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       delivered_days: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', 7),
       ledger_days: int(env, 'RELAY_RETENTION_LEDGER_DAYS', 30),
     },
+    telemetry: { enabled: isTelemetryEnabled(env) },
   }
+}
+
+/** Default on. RELAY_TELEMETRY=off (or 0 / false) disables the operational call-home. */
+export function isTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.RELAY_TELEMETRY ?? '').trim().toLowerCase()
+  return raw !== 'off' && raw !== '0' && raw !== 'false'
 }

@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
 import { openDb, type Db } from './db/db.js'
 import { migrate } from './db/migrate.js'
-import { resolveActiveConfig } from './config/store.js'
-import { loadRuntimeSettings } from './config/runtime.js'
+import { resolveActiveConfig, readActiveConfigRaw } from './config/store.js'
+import { loadRuntimeSettings, isTelemetryEnabled } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
 import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
@@ -14,6 +14,7 @@ import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
 import { Dispatcher } from './forward/dispatcher.js'
 import { EndCloseClient } from './forward/endclose-client.js'
+import { createTelemetry, snapshotFromDb, type Telemetry } from './forward/telemetry.js'
 import { EventsRepo } from './db/repo/events.js'
 import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
     log.error('setup required: missing/invalid environment', {
       missing: missingEnv.map((m) => `${m.name} (${m.problem})`).join(', '),
     })
+    await emitSetupTelemetry(missingEnv)
     const setupDbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
     const setup = buildSetupServer(missingEnv, {
       dbPath: setupDbPath,
@@ -85,6 +87,17 @@ async function main(): Promise<void> {
   // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
   const state = resolveActiveConfig(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
 
+  const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
+  const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
+  const startedAt = Date.now()
+  const telemetry = createTelemetry({
+    enabled: settings.telemetry.enabled,
+    apiKey,
+    client,
+    version: VERSION,
+    startedAt,
+  })
+
   if (state.kind !== 'ok') {
     // Bootstrap mode: no config yet — or a stored config that fails validation (e.g.
     // written under an older schema). Crash-looping on the latter would leave no way to
@@ -96,6 +109,10 @@ async function main(): Promise<void> {
       log.error('stored configuration fails validation — recovery via the admin UI', {
         error: state.error,
       })
+      const raw = readActiveConfigRaw(db)
+      telemetry.captureError('config_invalid', new Error(state.error), {
+        ...(raw?.yamlText ? { config_yaml: raw.yamlText } : {}),
+      })
     } else {
       log.warn('no configuration — bootstrap mode: admin UI on :8081, webhooks NOT accepted')
     }
@@ -104,11 +121,12 @@ async function main(): Promise<void> {
     const admin = buildAdminServer({
       db,
       dbPath,
-      startedAt: Date.now(),
+      startedAt,
       basicAuth: adminAuth,
       maskingKey,
       dataKey,
       mode: 'bootstrap',
+      telemetry,
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
       onBootstrapApplied: () => {
         if (restarting) return
@@ -125,6 +143,13 @@ async function main(): Promise<void> {
     await admin.listen({ port: settings.admin.port, host: settings.admin.host })
     await metricsServer.listen({ port: settings.metrics.port, host: settings.metrics.host })
     log.info('bootstrap mode ready', { version: VERSION, admin_port: settings.admin.port })
+    telemetry.start(() => snapshotFromDb(db, dbPath, startedAt, VERSION))
+    telemetry.capture('relay_boot', {
+      mode: 'bootstrap',
+      persistent: isDbPathPersistent(dbPath),
+      route_count: 0,
+      has_api_key: Boolean(apiKey),
+    })
     return
   }
 
@@ -138,23 +163,31 @@ async function main(): Promise<void> {
   // A missing API key must not crash the relay: webhooks keep buffering (the point of
   // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
   // until the key is provided and the container restarted.
-  const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
   if (!apiKey) {
     log.error('ENDCLOSE_API_KEY not set — buffering only, nothing will forward')
   }
-  const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
 
-  const dispatcher = new Dispatcher({ db, settings, client, dataKey, maskingKey, signal, metrics })
+  const dispatcher = new Dispatcher({
+    db,
+    settings,
+    client,
+    dataKey,
+    maskingKey,
+    signal,
+    metrics,
+    telemetry,
+  })
   dispatcher.start()
 
-  const ingest = buildIngestServer({ db, dataKey, signal, metrics })
+  const ingest = buildIngestServer({ db, dataKey, signal, metrics, telemetry })
   const admin = buildAdminServer({
     db,
     dbPath,
-    startedAt: Date.now(),
+    startedAt,
     basicAuth: adminAuth,
     maskingKey,
     dataKey,
+    telemetry,
   })
   const metricsServer = buildMetricsServer({
     metrics,
@@ -171,14 +204,28 @@ async function main(): Promise<void> {
     admin_port: settings.admin.port,
     metrics_port: settings.metrics.port,
   })
+  telemetry.start(() => snapshotFromDb(db, dbPath, startedAt, VERSION))
+  telemetry.capture('relay_boot', {
+    mode: 'running',
+    persistent: isDbPathPersistent(dbPath),
+    route_count: config.routes.length,
+    has_api_key: Boolean(apiKey),
+    config_hash: loaded.hash,
+    config_yaml: loaded.yamlText,
+  })
 
   let shuttingDown = false
   const shutdown = async (sig: string) => {
     if (shuttingDown) return
     shuttingDown = true
     log.info('shutting down', { signal: sig })
+    telemetry.capture('relay_shutdown', {
+      signal: sig,
+      uptime_s: Math.round((Date.now() - startedAt) / 1000),
+    })
     await ingest.close() // stop accepting webhooks first
     await dispatcher.stop() // drain the in-flight dispatch cycle
+    await telemetry.stop()
     await Promise.all([admin.close(), metricsServer.close()])
     db.close()
     process.exit(0)
@@ -189,5 +236,38 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   log.error('fatal boot error', { error: (err as Error).message })
-  process.exit(1)
+  void emitFatalTelemetry(err).finally(() => process.exit(1))
 })
+
+async function emitSetupTelemetry(missing: { name: string }[]): Promise<void> {
+  const t = telemetryFromEnv()
+  if (!t) return
+  t.captureError('setup_missing_env', new Error('setup required'), {
+    missing: missing.map((m) => m.name).join(','),
+  })
+  await t.stop()
+}
+
+async function emitFatalTelemetry(err: unknown): Promise<void> {
+  try {
+    const t = telemetryFromEnv()
+    if (!t) return
+    t.captureError('fatal_boot', err)
+    await t.stop()
+  } catch {
+    // never block process exit
+  }
+}
+
+function telemetryFromEnv(): Telemetry | undefined {
+  const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
+  if (!apiKey || !isTelemetryEnabled()) return undefined
+  const settings = loadRuntimeSettings()
+  return createTelemetry({
+    enabled: true,
+    apiKey,
+    client: new EndCloseClient(settings.endcloseBaseUrl, apiKey),
+    version: VERSION,
+    startedAt: Date.now(),
+  })
+}
