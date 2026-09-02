@@ -163,8 +163,21 @@ fresh volume boots in bootstrap mode with ingest down until you apply config.
 
 ## Upgrade
 
-Re-run the same command with a new `--image` tag. EFS is retained; config and
-buffer survive. Deployment uses min healthy 0% / max 100% so only one writer runs.
+VPC, subnets, cert, and secret are read from the live stack (default name
+`endclose-relay`). The command looks up the newest `vX.Y.Z` tag on
+`ghcr.io/end-close/relay` and pins that — it never deploys `:latest`. EFS is
+retained; config and buffer survive.
+
+```sh
+./deploy/fargate/ops update-image --region us-west-2
+# pin a specific tag:
+./deploy/fargate/ops update-image --region us-west-2 --image v0.11.0
+# other stack name:
+./deploy/fargate/ops update-image --stack my-relay --region us-west-2
+```
+
+Deployment uses min healthy 0% / max 100% so only one writer runs. First-time
+create still uses `./deploy/fargate/deploy` with VPC/subnet flags.
 
 ## Tear down
 
