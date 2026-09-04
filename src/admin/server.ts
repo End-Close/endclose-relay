@@ -24,6 +24,7 @@ import type { Json } from '../mask/paths.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
 import type { Telemetry } from '../forward/telemetry.js'
+import { envSecrets, hasSecret, type SecretResolver } from '../engine/secrets.js'
 
 // The admin plane is the single management surface (UI + API). Basic auth is mandatory;
 // mutations additionally reject cross-site browser requests. Attribution is
@@ -47,6 +48,8 @@ export interface AdminDeps {
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
   telemetry?: Telemetry
+  /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
+  secrets?: SecretResolver
 }
 
 export function buildAdminServer(deps: AdminDeps): FastifyInstance {
@@ -54,6 +57,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   const routes = new RoutesRepo(deps.db)
   const kv = new KvRepo(deps.db)
   const audit = new AuditRepo(deps.db)
+  const secrets = deps.secrets ?? envSecrets()
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
   const mode = deps.mode ?? 'running'
@@ -115,7 +119,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       uptime_s: Math.round((now - deps.startedAt) / 1000),
       // Boot check surfaced to the UI: secrets referenced by the active config (plus the
       // appliance keys) and whether each is currently set in the environment.
-      secret_envs: activeConfig ? envStatus(activeConfig) : [],
+      secret_envs: activeConfig ? envStatus(activeConfig, secrets) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
       config_error: deps.configError ?? null,
@@ -268,7 +272,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
         valid: true,
         hash: loaded.hash,
         routes: loaded.config.routes.map((r) => r.id),
-        secret_envs: envStatus(loaded.config),
+        secret_envs: envStatus(loaded.config, secrets),
       }
     } catch (err) {
       return { valid: false, error: (err as Error).message }
@@ -280,7 +284,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     if (!yaml) return reply.code(400).send({ error: 'yaml required' })
     let loaded
     try {
-      loaded = saveConfig(deps.db, yaml, ACTOR)
+      loaded = saveConfig(deps.db, yaml, ACTOR, secrets)
     } catch (err) {
       return reply.code(422).send({ error: (err as Error).message })
     }
@@ -348,14 +352,14 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   return app
 }
 
-function envStatus(config: { routes: { auth: { secret_env: string } }[] }) {
+function envStatus(config: { routes: { auth: { secret_env: string } }[] }, secrets: SecretResolver) {
   const names = [
     'RELAY_DATA_KEY',
     'MASKING_HMAC_KEY',
     'ENDCLOSE_API_KEY',
     ...new Set(config.routes.map((r) => r.auth.secret_env)),
   ]
-  return names.map((name) => ({ name, set: Boolean(process.env[name]) }))
+  return names.map((name) => ({ name, set: hasSecret(secrets, name) }))
 }
 
 function dbBytes(dbPath: string): number {

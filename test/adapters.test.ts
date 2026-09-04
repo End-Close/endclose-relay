@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { payabliAdapter } from '../src/ingest/adapters/payabli.js'
 import { genericHmacAdapter } from '../src/ingest/adapters/generic-hmac.js'
 import { routeSchema } from '../src/config/schema.js'
@@ -32,25 +32,23 @@ function req(headers: Record<string, string>, ip = '54.166.54.170', body: Buffer
   return { rawBody: body, headers, remoteIp: ip }
 }
 
-beforeEach(() => {
-  process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer s3cret'
-})
+const ctx = { secret: 'Bearer s3cret' }
 
 describe('payabli adapter', () => {
   it('accepts matching header + allowed ip', () => {
-    expect(payabliAdapter.verify(req({ authorization: 'Bearer s3cret' }), payabliRoute)).toEqual({
+    expect(payabliAdapter.verify(req({ authorization: 'Bearer s3cret' }), payabliRoute, ctx)).toEqual({
       ok: true,
     })
   })
   it('rejects wrong header value', () => {
-    expect(payabliAdapter.verify(req({ authorization: 'Bearer nope' }), payabliRoute)).toMatchObject(
+    expect(payabliAdapter.verify(req({ authorization: 'Bearer nope' }), payabliRoute, ctx)).toMatchObject(
       { ok: false, reason: 'bad auth header' },
     )
   })
   it('rejects missing header and bad ip', () => {
-    expect(payabliAdapter.verify(req({}), payabliRoute)).toMatchObject({ ok: false })
+    expect(payabliAdapter.verify(req({}), payabliRoute, ctx)).toMatchObject({ ok: false })
     expect(
-      payabliAdapter.verify(req({ authorization: 'Bearer s3cret' }, '10.0.0.1'), payabliRoute),
+      payabliAdapter.verify(req({ authorization: 'Bearer s3cret' }, '10.0.0.1'), payabliRoute, ctx),
     ).toMatchObject({ ok: false, reason: 'source ip not allowed' })
   })
   it('extracts stable event ids per event type', () => {
@@ -87,7 +85,6 @@ describe('generic hmac adapter', () => {
   })
 
   it('verifies timestamp.body signatures and rejects stale/bad ones', () => {
-    process.env.GENERIC_SECRET = 'topsecret'
     const body = Buffer.from('{"id":"evt_1","amount":"5.00"}')
     const ts = String(Math.floor(Date.now() / 1000))
     const sig = createHmac('sha256', 'topsecret').update(`${ts}.${body.toString()}`).digest('hex')
@@ -96,6 +93,7 @@ describe('generic hmac adapter', () => {
       genericHmacAdapter.verify(
         { rawBody: body, headers: { 'x-signature': sig, 'x-timestamp': ts }, remoteIp: '1.1.1.1' },
         route,
+        { secret: 'topsecret' },
       ),
     ).toEqual({ ok: true })
 
@@ -107,6 +105,7 @@ describe('generic hmac adapter', () => {
           remoteIp: '1.1.1.1',
         },
         route,
+        { secret: 'topsecret' },
       ),
     ).toEqual({ ok: true })
 
@@ -122,6 +121,7 @@ describe('generic hmac adapter', () => {
           remoteIp: '1.1.1.1',
         },
         route,
+        { secret: 'topsecret' },
       ),
     ).toMatchObject({ ok: false, reason: 'stale timestamp' })
 
@@ -133,6 +133,7 @@ describe('generic hmac adapter', () => {
           remoteIp: '1.1.1.1',
         },
         route,
+        { secret: 'topsecret' },
       ),
     ).toMatchObject({ ok: false, reason: 'bad signature' })
   })

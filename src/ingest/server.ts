@@ -12,6 +12,7 @@ import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
 import type { Telemetry } from '../forward/telemetry.js'
 import { log, type Logger } from '../log.js'
+import { envSecrets, type SecretResolver } from '../engine/secrets.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 
 // Headers persisted alongside the payload for debugging/replay. Auth headers are
@@ -26,6 +27,8 @@ export interface IngestDeps {
   metrics: Metrics
   telemetry?: Telemetry
   logger?: Logger
+  /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
+  secrets?: SecretResolver
 }
 
 function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
@@ -43,6 +46,7 @@ function escapeRe(s: string): string {
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
   const { db, dataKey, signal, metrics, telemetry } = deps
   const logger = deps.logger ?? log
+  const secrets = deps.secrets ?? envSecrets()
   const events = new EventsRepo(db)
   const routes = new RoutesRepo(db)
   const kv = new KvRepo(db)
@@ -84,7 +88,12 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
     const adapter = adapterFor(route.source)
     const raw = { rawBody, headers: request.headers, remoteIp: request.ip }
-    const verdict = adapter.verify(raw, route)
+    const secret = secrets.resolve(route.auth.secret_env)
+    if (secret === undefined) {
+      logger.error('ingest secret unavailable', { route: routeId, secret_env: route.auth.secret_env })
+      return reply.code(500).send({ error: 'internal error' })
+    }
+    const verdict = adapter.verify(raw, route, { secret })
     if (!verdict.ok) {
       metrics.ingest(routeId, 'rejected_auth')
       logger.warn('ingest rejected', { route: routeId, reason: verdict.reason })

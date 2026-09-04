@@ -25,10 +25,3 @@ export function parseConfig(yamlText: string): LoadedConfig {
   const hash = 'sha256:' + createHash('sha256').update(yamlText, 'utf8').digest('hex')
   return { config, yamlText, hash }
 }
-
-/** Resolve a secret referenced by env-var name; throws with a clear message when missing. */
-export function resolveSecret(envName: string): string {
-  const v = process.env[envName]
-  if (!v) throw new Error(`missing required secret env var: ${envName}`)
-  return v
-}

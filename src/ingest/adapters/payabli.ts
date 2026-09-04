@@ -1,8 +1,13 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { resolveSecret } from '../../config/load.js'
 import type { RouteConfig } from '../../config/schema.js'
 import { getAtPath, type Json } from '../../mask/paths.js'
-import { headerValue, type ProcessorAdapter, type RawRequest, type VerifyResult } from './types.js'
+import {
+  headerValue,
+  type ProcessorAdapter,
+  type RawRequest,
+  type VerifyContext,
+  type VerifyResult,
+} from './types.js'
 
 // Payabli does not sign webhooks. Trust boundary: a customer-defined static header
 // (configured on the Payabli notification via webHeaderParameters) compared in constant
@@ -29,7 +34,7 @@ const EVENT_ID_PATHS: Record<string, string> = {
 export const payabliAdapter: ProcessorAdapter = {
   name: 'payabli',
 
-  verify(req: RawRequest, route: RouteConfig): VerifyResult {
+  verify(req: RawRequest, route: RouteConfig, ctx: VerifyContext): VerifyResult {
     if (route.auth.mode !== 'static_header') {
       return { ok: false, reason: 'route auth mode mismatch' }
     }
@@ -38,8 +43,7 @@ export const payabliAdapter: ProcessorAdapter = {
     }
     const presented = headerValue(req.headers, route.auth.header)
     if (!presented) return { ok: false, reason: `missing ${route.auth.header} header` }
-    const expected = resolveSecret(route.auth.secret_env)
-    if (!constantTimeEquals(presented, expected)) return { ok: false, reason: 'bad auth header' }
+    if (!constantTimeEquals(presented, ctx.secret)) return { ok: false, reason: 'bad auth header' }
     return { ok: true }
   },
 

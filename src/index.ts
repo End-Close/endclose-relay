@@ -18,6 +18,7 @@ import { createTelemetry, snapshotFromDb, type Telemetry } from './forward/telem
 import { EventsRepo } from './db/repo/events.js'
 import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
+import { envSecrets } from './engine/secrets.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
@@ -79,13 +80,18 @@ async function main(): Promise<void> {
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY)
   const adminAuth = process.env.ADMIN_BASIC_AUTH!
   const settings = loadRuntimeSettings()
+  const secretResolver = envSecrets(process.env)
 
   const dbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
   const db = openDb(dbPath)
   migrate(db)
 
   // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
-  const state = resolveActiveConfig(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
+  const state = resolveActiveConfig(
+    db,
+    process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml',
+    secretResolver,
+  )
 
   const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
   const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
@@ -127,6 +133,7 @@ async function main(): Promise<void> {
       dataKey,
       mode: 'bootstrap',
       telemetry,
+      secrets: secretResolver,
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
       onBootstrapApplied: () => {
         if (restarting) return
@@ -179,7 +186,14 @@ async function main(): Promise<void> {
   })
   dispatcher.start()
 
-  const ingest = buildIngestServer({ db, dataKey, signal, metrics, telemetry })
+  const ingest = buildIngestServer({
+    db,
+    dataKey,
+    signal,
+    metrics,
+    telemetry,
+    secrets: secretResolver,
+  })
   const admin = buildAdminServer({
     db,
     dbPath,
@@ -188,6 +202,7 @@ async function main(): Promise<void> {
     maskingKey,
     dataKey,
     telemetry,
+    secrets: secretResolver,
   })
   const metricsServer = buildMetricsServer({
     metrics,

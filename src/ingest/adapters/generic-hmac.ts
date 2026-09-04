@@ -1,8 +1,13 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { resolveSecret } from '../../config/load.js'
 import type { RouteConfig } from '../../config/schema.js'
 import { getAtPath, type Json } from '../../mask/paths.js'
-import { headerValue, type ProcessorAdapter, type RawRequest, type VerifyResult } from './types.js'
+import {
+  headerValue,
+  type ProcessorAdapter,
+  type RawRequest,
+  type VerifyContext,
+  type VerifyResult,
+} from './types.js'
 
 // Generic HMAC-signature adapter: covers processors that sign `body` or `timestamp.body`
 // with a shared secret. Configuration lives entirely in the route's auth block, so most
@@ -11,7 +16,7 @@ import { headerValue, type ProcessorAdapter, type RawRequest, type VerifyResult 
 export const genericHmacAdapter: ProcessorAdapter = {
   name: 'generic_hmac',
 
-  verify(req: RawRequest, route: RouteConfig): VerifyResult {
+  verify(req: RawRequest, route: RouteConfig, ctx: VerifyContext): VerifyResult {
     if (route.auth.mode !== 'hmac') return { ok: false, reason: 'route auth mode mismatch' }
     const auth = route.auth
 
@@ -30,8 +35,7 @@ export const genericHmacAdapter: ProcessorAdapter = {
     const presented = headerValue(req.headers, auth.header)
     if (!presented) return { ok: false, reason: `missing ${auth.header} header` }
 
-    const secret = resolveSecret(auth.secret_env)
-    const expectedHex = createHmac(auth.algorithm, secret).update(signedContent).digest('hex')
+    const expectedHex = createHmac(auth.algorithm, ctx.secret).update(signedContent).digest('hex')
     // Accept optional "sha256=" style prefixes.
     const presentedHex = (presented.includes('=') && !/^[0-9a-f]+$/i.test(presented)
       ? presented.slice(presented.indexOf('=') + 1)
