@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
 import { openDb, type Db } from './db/db.js'
 import { migrate } from './db/migrate.js'
@@ -12,7 +11,7 @@ import { buildSetupServer, checkRequiredEnv } from './admin/setup-server.js'
 import { isDbPathPersistent } from './db/persistence.js'
 import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
-import { Dispatcher } from './forward/dispatcher.js'
+import { createRelay } from './engine/relay.js'
 import { EndCloseClient } from './forward/endclose-client.js'
 import { createTelemetry, snapshotFromDb, type Telemetry } from './forward/telemetry.js'
 import { EventsRepo } from './db/repo/events.js'
@@ -21,7 +20,6 @@ import { VERSION } from './version.js'
 import { envSecrets } from './engine/secrets.js'
 import { RelayHooks } from './engine/hooks.js'
 import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from './db/sqlite-store.js'
-import { aesGcmCodec } from './engine/codec.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
@@ -169,7 +167,6 @@ async function main(): Promise<void> {
   log.info('forwarding to', { base_url: settings.endcloseBaseUrl })
 
   const metrics = buildMetrics(db, dbPath)
-  const signal = new EventEmitter()
   const hooks = new RelayHooks()
   metrics.subscribe(hooks)
   telemetry.subscribe(hooks)
@@ -180,34 +177,35 @@ async function main(): Promise<void> {
     log.error('ENDCLOSE_API_KEY not set — buffering only, nothing will forward')
   }
 
-  const store = new SqliteEventStore(db)
-  const codec = aesGcmCodec(dataKey)
-  const control = new SqliteControlStore(db)
-  const routes = new DbRouteProvider(db)
-  const dispatcher = new Dispatcher({
-    store,
-    control,
-    routes,
-    settings,
+  const relay = createRelay({
+    routes: new DbRouteProvider(db),
+    store: new SqliteEventStore(db),
+    control: new SqliteControlStore(db),
+    secrets: secretResolver,
+    endclose: { apiKey, baseUrl: settings.endcloseBaseUrl },
     client,
-    codec,
+    encryption: { dataKey },
     maskingKey,
+    dispatch: {
+      batchMax: settings.dispatch.batch_max,
+      pollIntervalMs: settings.dispatch.poll_interval_ms,
+      backoffBaseMs: settings.dispatch.backoff_base_ms,
+      backoffCapMs: settings.dispatch.backoff_cap_ms,
+      parkAfterMs: settings.dispatch.park_after_ms,
+      leaseMs: settings.dispatch.lease_ms,
+    },
+    retention: {
+      deliveredDays: settings.retention.delivered_days,
+      ledgerDays: settings.retention.ledger_days,
+    },
+    logger: log,
     // The appliance is single-instance by design: a stable owner reclaims its own leases on restart.
     instanceId: 'appliance',
-    signal,
     hooks,
   })
-  dispatcher.start()
+  relay.start()
 
-  const ingest = buildIngestServer({
-    store,
-    control,
-    routes,
-    codec,
-    signal,
-    hooks,
-    secrets: secretResolver,
-  })
+  const ingest = buildIngestServer({ ingest: relay.ingest })
   const admin = buildAdminServer({
     db,
     dbPath,
@@ -252,7 +250,7 @@ async function main(): Promise<void> {
       uptime_s: Math.round((Date.now() - startedAt) / 1000),
     })
     await ingest.close() // stop accepting webhooks first
-    await dispatcher.stop() // drain the in-flight dispatch cycle
+    await relay.stop() // drain the in-flight dispatch cycle
     await telemetry.stop()
     await Promise.all([admin.close(), metricsServer.close()])
     db.close()

@@ -4,11 +4,10 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildIngestServer } from '../src/ingest/server.js'
-import { Dispatcher } from '../src/forward/dispatcher.js'
-import { EndCloseClient } from '../src/forward/endclose-client.js'
+import type { Relay } from '../src/engine/relay.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
-import { CODEC, FIXTURES, MASKING_KEY, setupDb, testSettings } from './helpers.js'
+import { FIXTURES, setupDb, setupRelay } from './helpers.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
 const batchPaidBody = readFileSync(join(FIXTURES, 'payabli-batch-paid.json'))
@@ -84,7 +83,7 @@ async function waitFor(cond: () => boolean, timeoutMs = 8000): Promise<void> {
 describe('ingest → store → forward', () => {
   let mock: MockEndClose
   let db: ReturnType<typeof setupDb>['db']
-  let dispatcher: Dispatcher
+  let relay: Relay
   let ingest: ReturnType<typeof buildIngestServer>
   let events: EventsRepo
 
@@ -94,33 +93,14 @@ describe('ingest → store → forward', () => {
     const setup = setupDb(port)
     db = setup.db
     events = new EventsRepo(db)
-    const client = new EndCloseClient(`http://127.0.0.1:${port}/v1`, 'test-api-key')
-    dispatcher = new Dispatcher({
-      store: setup.store,
-      control: setup.control,
-      routes: setup.routes,
-      settings: testSettings(),
-      client,
-      codec: CODEC,
-      maskingKey: MASKING_KEY,
-      instanceId: 'test',
-      signal: setup.signal,
-      hooks: setup.hooks,
-    })
-    ingest = buildIngestServer({
-      store: setup.store,
-      control: setup.control,
-      routes: setup.routes,
-      codec: CODEC,
-      signal: setup.signal,
-      hooks: setup.hooks,
-    })
+    relay = setupRelay(setup, port)
+    ingest = buildIngestServer({ ingest: relay.ingest })
     await ingest.ready()
-    dispatcher.start()
+    relay.start()
   })
 
   afterEach(async () => {
-    await dispatcher.stop()
+    await relay.stop()
     await ingest.close()
     await mock.close()
     db.close()

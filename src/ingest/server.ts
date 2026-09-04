@@ -1,34 +1,14 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import type { EventEmitter } from 'node:events'
-import type { ControlStore, EventStore, RouteProvider } from '../engine/store.js'
-import type { RelayHooks } from '../engine/hooks.js'
-import { log, type Logger } from '../log.js'
-import { envSecrets, type SecretResolver } from '../engine/secrets.js'
-import { ingestWebhook } from '../engine/ingest.js'
-import type { PayloadCodec } from '../engine/codec.js'
+import type { RawRequest } from './adapters/types.js'
+import type { IngestResult } from '../engine/ingest.js'
 
 // The appliance's webhook listener: a thin Fastify shell around the engine's ingest path.
 
 export interface IngestDeps {
-  store: EventStore
-  control: ControlStore
-  routes: RouteProvider
-  codec: PayloadCodec
-  /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
-  signal: EventEmitter
-  hooks?: RelayHooks
-  logger?: Logger
-  /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
-  secrets?: SecretResolver
+  ingest(routeId: string, req: RawRequest): Promise<IngestResult>
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const engineDeps = {
-    ...deps,
-    logger: deps.logger ?? log,
-    secrets: deps.secrets ?? envSecrets(),
-  }
-
   const app = Fastify({
     logger: false,
     bodyLimit: 10 * 1024 * 1024, // hard ceiling; per-route limits enforced by the engine
@@ -45,7 +25,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
   app.post('/ingest/:routeId', async (request, reply) => {
     const { routeId } = request.params as { routeId: string }
-    const result = await ingestWebhook(engineDeps, routeId, {
+    const result = await deps.ingest(routeId, {
       rawBody: request.body as Buffer,
       headers: request.headers,
       remoteIp: request.ip,

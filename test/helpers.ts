@@ -10,6 +10,9 @@ import { Metrics } from '../src/metrics/metrics.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
 import { aesGcmCodec } from '../src/engine/codec.js'
+import { createRelay, type Relay, type DispatchSettings } from '../src/engine/relay.js'
+import { envSecrets } from '../src/engine/secrets.js'
+import { log } from '../src/log.js'
 import { RelayHooks } from '../src/engine/hooks.js'
 import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from '../src/db/sqlite-store.js'
 
@@ -96,6 +99,35 @@ export function setupDb(ecPort = 9999): {
 
 export function testConfig(ecPort = 9999) {
   return parseConfig(TEST_CONFIG_YAML.replaceAll('__EC_PORT__', String(ecPort))).config
+}
+
+/** Fast dispatch settings for tests (poll 50ms, backoff 20→200ms). */
+export function testDispatch(): DispatchSettings {
+  return {
+    batchMax: 100,
+    pollIntervalMs: 50,
+    backoffBaseMs: 20,
+    backoffCapMs: 200,
+    parkAfterMs: 7 * 24 * 3600 * 1000,
+    leaseMs: 600_000,
+  }
+}
+
+/** An engine over the test database, pointed at a mock End Close on `ecPort`. Not started. */
+export function setupRelay(setup: ReturnType<typeof setupDb>, ecPort = 9999): Relay {
+  return createRelay({
+    routes: setup.routes,
+    store: setup.store,
+    control: setup.control,
+    secrets: envSecrets(),
+    endclose: { apiKey: 'test-api-key', baseUrl: `http://127.0.0.1:${ecPort}/v1` },
+    encryption: { dataKey: DATA_KEY },
+    maskingKey: MASKING_KEY,
+    dispatch: testDispatch(),
+    logger: log,
+    instanceId: 'test',
+    hooks: setup.hooks,
+  })
 }
 
 /** Fast dispatch/retention settings for tests (poll 50ms, backoff 20→200ms). */

@@ -6,7 +6,7 @@ import { buildIngestServer } from '../src/ingest/server.js'
 import { buildMetricsServer } from '../src/metrics/server.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
-import { CODEC, DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
+import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb, setupRelay } from './helpers.js'
 import type { Metrics } from '../src/metrics/metrics.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
@@ -29,14 +29,7 @@ describe('admin API', () => {
       maskingKey: MASKING_KEY,
       dataKey: DATA_KEY,
     })
-    ingest = buildIngestServer({
-      store: setup.store,
-      control: setup.control,
-      routes: setup.routes,
-      codec: CODEC,
-      signal: setup.signal,
-      hooks: setup.hooks,
-    })
+    ingest = buildIngestServer({ ingest: setupRelay(setup).ingest })
     await admin.ready()
     await ingest.ready()
   })
@@ -419,14 +412,7 @@ describe('metrics server', () => {
 
   beforeEach(async () => {
     setup = setupDb()
-    ingest = buildIngestServer({
-      store: setup.store,
-      control: setup.control,
-      routes: setup.routes,
-      codec: CODEC,
-      signal: setup.signal,
-      hooks: setup.hooks,
-    })
+    ingest = buildIngestServer({ ingest: setupRelay(setup).ingest })
     metricsServer = buildMetricsServer({
       metrics: setup.metrics,
       ready: () => true,

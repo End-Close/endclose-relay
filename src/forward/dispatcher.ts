@@ -26,7 +26,11 @@ export interface DispatcherDeps {
   store: EventStore
   control: ControlStore
   routes: RouteProvider
-  settings: Pick<RuntimeSettings, 'dispatch' | 'retention'>
+  settings: {
+    dispatch: RuntimeSettings['dispatch']
+    /** null disables retention pruning. */
+    retention: RuntimeSettings['retention'] | null
+  }
   client: EndCloseClient
   codec: PayloadCodec
   maskingKey: Buffer
@@ -41,8 +45,10 @@ export class Dispatcher {
   private log: Logger
   private hooks: RelayHooks
   private running = false
+  private oneShots = 0
   private wakeRequested = false
-  private needsRecover = false
+  // Events stuck mid-dispatch from a previous crash go back on the queue on the first cycle.
+  private needsRecover = true
   private inFlight: Promise<void> = Promise.resolve()
   private pruneWork: Promise<void> = Promise.resolve()
   private timer: NodeJS.Timeout | undefined
@@ -54,19 +60,61 @@ export class Dispatcher {
   }
 
   start(): void {
+    if (this.running) return
     this.running = true
-    // Events stuck mid-dispatch from a previous crash go back on the queue on the first cycle.
-    this.needsRecover = true
-    this.deps.signal.on('event', () => this.wake())
+    this.deps.signal.on('event', this.onSignal)
     this.timer = setInterval(() => this.wake(), this.deps.settings.dispatch.poll_interval_ms)
-    this.pruneTimer = setInterval(() => this.schedulePrune(), PRUNE_INTERVAL_MS)
-    this.schedulePrune()
+    if (this.deps.settings.retention) {
+      this.pruneTimer = setInterval(() => this.schedulePrune(), PRUNE_INTERVAL_MS)
+      this.schedulePrune()
+    }
     this.wake()
+  }
+
+  private onSignal = () => this.wake()
+
+  /** Whether cycles may proceed: the loop is running, or a one-shot cycle is in progress. */
+  private active(): boolean {
+    return this.running || this.oneShots > 0
+  }
+
+  /**
+   * Run exactly one dispatch cycle, serialised with the background loop if it is running.
+   * Errors propagate to the caller (they are also emitted as hooks).
+   */
+  runOnce(): Promise<void> {
+    this.oneShots++
+    const run = this.inFlight.then(async () => {
+      try {
+        await this.cycle()
+      } catch (err) {
+        const op = (err as { op?: string }).op
+        this.log.error('dispatch cycle failed', { error: (err as Error).message, ...(op ? { op } : {}) })
+        this.hooks.emit('error', { kind: 'dispatch_cycle', error: err, ...(op ? { op } : {}) })
+        throw err
+      } finally {
+        this.oneShots--
+      }
+    })
+    this.inFlight = run.catch(() => {})
+    return run
+  }
+
+  /** Run retention pruning to completion (bounded batches, yielding between them). */
+  async pruneNow(): Promise<{ wiped: number; deleted: number }> {
+    this.oneShots++
+    try {
+      await this.pruneWork
+      return await this.runPrune(true)
+    } finally {
+      this.oneShots--
+    }
   }
 
   /** Stop accepting new work and wait for the in-flight cycle and prune to drain. */
   async stop(): Promise<void> {
     this.running = false
+    this.deps.signal.off('event', this.onSignal)
     if (this.timer) clearInterval(this.timer)
     if (this.pruneTimer) clearInterval(this.pruneTimer)
     await this.inFlight
@@ -113,7 +161,7 @@ export class Dispatcher {
     await this.deps.store.parkExpired(now, this.deps.settings.dispatch.park_after_ms)
 
     for (const routeId of await this.deps.store.routesWithDueEvents(now)) {
-      if (!this.running) return
+      if (!this.active()) return
       if (await this.deps.control.isRoutePaused(routeId)) continue
       const route = await this.deps.routes.get(routeId)
       if (!route) continue
@@ -275,18 +323,18 @@ export class Dispatcher {
   }
 
   private schedulePrune(): void {
-    this.pruneWork = this.pruneWork.then(() => this.runPrune())
+    this.pruneWork = this.pruneWork.then(() => this.runPrune(false)).then(() => {})
   }
 
-  private async runPrune(): Promise<void> {
-    if (!this.running) return
+  private async runPrune(rethrow: boolean): Promise<{ wiped: number; deleted: number }> {
     const { retention } = this.deps.settings
+    if (!retention || !this.active()) return { wiped: 0, deleted: 0 }
     const now = new Date().toISOString()
     let wiped = 0
     let deleted = 0
     try {
       for (;;) {
-        if (!this.running) break
+        if (!this.active()) break
         const batch = await this.deps.store.pruneBatch(
           now,
           retention.delivered_days,
@@ -305,7 +353,9 @@ export class Dispatcher {
       // ran, so a lock error skipped both dispatch and the next hour of retention.
       this.log.error('retention prune failed', { error: (err as Error).message })
       this.hooks.emit('error', { kind: 'prune', error: err })
+      if (rethrow) throw err
     }
+    return { wiped, deleted }
   }
 
   private async releaseLeftover(claimed: EventRow[], error: string): Promise<void> {
