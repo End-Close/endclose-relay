@@ -130,14 +130,34 @@ the matching `Authorization` header via `webHeaderParameters`.
   buffered events. It's a killswitch, not an upgrade path. Include the volume in your
   backups.
 
+## Repository layout
+
+The relay is built from an embeddable engine, published as workspace packages, so the same
+code can run inside a customer's own backend:
+
+| Package | Contents |
+|---|---|
+| `packages/core` — `@endclose/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
+| `packages/store-sqlite` — `@endclose/relay-sqlite` | the SQLite event/control store the appliance uses (safe on EFS/NFS). |
+| `packages/store-contract` — `@endclose/relay-store-contract` | the behavioural test suite every store implementation must pass. |
+| repo root — `endclose-relay` | the appliance: boot, admin UI/API, `relayctl`, metrics, telemetry, config versioning. |
+
+See [`packages/core/README.md`](packages/core/README.md) for embedding the engine, and
+[`examples/embedded.ts`](examples/embedded.ts) for a dependency-free host on `node:http`.
+The packages are workspace-private for now; publishing them is a separate decision.
+
 ## Development
 
 ```sh
 pnpm install
-pnpm test        # unit + integration (mock End Close API)
-pnpm typecheck
+pnpm test        # unit + integration (mock End Close API), across all packages
+pnpm typecheck   # builds the packages first (the appliance consumes their declarations)
 pnpm dev:all     # mprocs: relay (watch mode) + mock End Close API
 ```
+
+Tests resolve the packages from source (see `vitest.config.ts`); `pnpm dev`, `pnpm typecheck`
+and `pnpm build` build the packages first (incrementally, via `tsc -b`). After editing
+`packages/*`, re-run `pnpm build:packages` for the watch-mode relay to pick the change up.
 
 `pnpm dev:all` starts [mprocs](https://github.com/pvolok/mprocs) with the relay in watch
 mode (seed config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`, admin auth

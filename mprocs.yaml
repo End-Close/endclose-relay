@@ -8,7 +8,7 @@
 # Dev-only secrets are hardcoded here on purpose — they gate nothing real.
 procs:
   relay:
-    shell: tsx watch src/index.ts
+    shell: pnpm build:packages && tsx watch src/index.ts
     env:
       RELAY_CONFIG: dev/relay.dev.yaml # first-boot seed; config then lives in data/dev.db
       RELAY_DB_PATH: ./data/dev.db

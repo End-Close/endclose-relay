@@ -1,5 +1,5 @@
-import type { Db } from '../db.js'
-import type { RouteConfig } from '../../config/schema.js'
+import type { Db } from '@endclose/relay-sqlite'
+import type { RouteConfig } from '@endclose/relay'
 
 export interface RouteRow {
   id: string
@@ -37,18 +37,6 @@ export class RoutesRepo {
     return row ? (JSON.parse(row.config_json) as RouteConfig) : undefined
   }
 
-  isPaused(id: string): boolean {
-    const row = this.db.prepare('SELECT paused FROM routes WHERE id = ?').get(id) as
-      | { paused: number }
-      | undefined
-    return row ? row.paused === 1 : false
-  }
-
-  setPaused(id: string, paused: boolean): void {
-    this.db
-      .prepare('UPDATE routes SET paused = ?, updated_at = ? WHERE id = ?')
-      .run(paused ? 1 : 0, new Date().toISOString(), id)
-  }
 
   all(): RouteConfig[] {
     const rows = this.db.prepare('SELECT * FROM routes').all() as RouteRow[]

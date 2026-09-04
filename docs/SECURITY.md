@@ -40,8 +40,10 @@ values across records without ever seeing the raw value.
 card numbers (PANs) and SSN patterns inside strings are redacted, and config
 validation refuses to map fields whose names indicate card verification codes,
 account/routing numbers, SSNs, passwords, or API keys unless they are hashed. No
-configuration option disables this; it is compiled into the binary
-(`src/mask/defaults.ts`).
+configuration option disables this; it is enforced in code by the engine library the
+appliance is built from (`@endclose/relay`, `packages/core/src/mask/defaults.ts`). The
+library lives in this repository and the image is built from the same reviewed checkout,
+so the version you audit is the version that runs.
 
 **Verify it yourself:** the admin UI's config tab has a **map preview**: paste a sample
 payload and see the exact record that would be sent, the source of every field, and

@@ -1,15 +1,8 @@
 import { Counter, Gauge, Histogram, Registry } from 'prom-client'
-import type { GlobalKillswitch } from '../db/repo/kv.js'
+import type { ForwardResult, IngestOutcome, Killswitch as GlobalKillswitch, RelayHooks } from '@endclose/relay'
 
-export type IngestResult =
-  | 'accepted'
-  | 'duplicate'
-  | 'filtered'
-  | 'rejected_auth'
-  | 'rejected_size'
-  | 'rejected_json'
-  | 'panic'
-export type ForwardResult = 'delivered' | 'retried' | 'parked'
+export type IngestResult = IngestOutcome
+export type { ForwardResult }
 
 export interface MetricsProviders {
   queueDepths: () => Record<string, number>
@@ -78,6 +71,17 @@ export class Metrics {
       collect() {
         this.set(providers.dbBytes())
       },
+    })
+  }
+
+  /** Drive every metric from the engine's hooks. */
+  subscribe(hooks: RelayHooks): void {
+    hooks.on('ingest', (e) => this.ingest(e.routeId, e.outcome))
+    hooks.on('forward', (e) => this.forward(e.routeId, e.result, e.count))
+    hooks.on('delivered', (e) => this.observeDeliveryLag(e.receivedAt, e.deliveredAt))
+    hooks.on('prune', (e) => {
+      this.pruned('wiped', e.wiped)
+      this.pruned('deleted', e.deleted)
     })
   }
 

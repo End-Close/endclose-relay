@@ -1,22 +1,18 @@
-import { EventEmitter } from 'node:events'
 import { statSync } from 'node:fs'
-import { openDb, type Db } from './db/db.js'
+import { openDb, SqliteControlStore, SqliteEventStore, EventsRepo, KvRepo, type Db } from '@endclose/relay-sqlite'
+import { createRelay, deriveKey, EndCloseClient, envSecrets, RelayHooks } from '@endclose/relay'
 import { migrate } from './db/migrate.js'
+import { DbRouteProvider } from './db/route-provider.js'
 import { resolveActiveConfig, readActiveConfigRaw } from './config/store.js'
 import { loadRuntimeSettings, isTelemetryEnabled } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
-import { deriveKey } from './crypto/keys.js'
 import { buildIngestServer } from './ingest/server.js'
 import { buildAdminServer } from './admin/server.js'
 import { buildSetupServer, checkRequiredEnv } from './admin/setup-server.js'
 import { isDbPathPersistent } from './db/persistence.js'
 import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
-import { Dispatcher } from './forward/dispatcher.js'
-import { EndCloseClient } from './forward/endclose-client.js'
 import { createTelemetry, snapshotFromDb, type Telemetry } from './forward/telemetry.js'
-import { EventsRepo } from './db/repo/events.js'
-import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
 import { log } from './log.js'
 
@@ -79,13 +75,18 @@ async function main(): Promise<void> {
   const maskingKey = deriveKey('MASKING_HMAC_KEY', process.env.MASKING_HMAC_KEY)
   const adminAuth = process.env.ADMIN_BASIC_AUTH!
   const settings = loadRuntimeSettings()
+  const secretResolver = envSecrets(process.env)
 
   const dbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
   const db = openDb(dbPath)
   migrate(db)
 
   // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
-  const state = resolveActiveConfig(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml')
+  const state = resolveActiveConfig(
+    db,
+    process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml',
+    secretResolver,
+  )
 
   const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
   const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
@@ -127,6 +128,7 @@ async function main(): Promise<void> {
       dataKey,
       mode: 'bootstrap',
       telemetry,
+      secrets: secretResolver,
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
       onBootstrapApplied: () => {
         if (restarting) return
@@ -159,7 +161,9 @@ async function main(): Promise<void> {
   log.info('forwarding to', { base_url: settings.endcloseBaseUrl })
 
   const metrics = buildMetrics(db, dbPath)
-  const signal = new EventEmitter()
+  const hooks = new RelayHooks()
+  metrics.subscribe(hooks)
+  telemetry.subscribe(hooks)
   // A missing API key must not crash the relay: webhooks keep buffering (the point of
   // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
   // until the key is provided and the container restarted.
@@ -167,19 +171,35 @@ async function main(): Promise<void> {
     log.error('ENDCLOSE_API_KEY not set — buffering only, nothing will forward')
   }
 
-  const dispatcher = new Dispatcher({
-    db,
-    settings,
+  const relay = createRelay({
+    routes: new DbRouteProvider(db, log),
+    store: new SqliteEventStore(db, { logger: log }),
+    control: new SqliteControlStore(db, { logger: log }),
+    secrets: secretResolver,
+    endclose: { apiKey, baseUrl: settings.endcloseBaseUrl },
     client,
-    dataKey,
+    encryption: { dataKey },
     maskingKey,
-    signal,
-    metrics,
-    telemetry,
+    dispatch: {
+      batchMax: settings.dispatch.batch_max,
+      pollIntervalMs: settings.dispatch.poll_interval_ms,
+      backoffBaseMs: settings.dispatch.backoff_base_ms,
+      backoffCapMs: settings.dispatch.backoff_cap_ms,
+      parkAfterMs: settings.dispatch.park_after_ms,
+      leaseMs: settings.dispatch.lease_ms,
+      recoverIntervalMs: settings.dispatch.recover_interval_ms,
+    },
+    retention: {
+      deliveredDays: settings.retention.delivered_days,
+      ledgerDays: settings.retention.ledger_days,
+    },
+    logger: log,
+    instanceId: settings.instanceId,
+    hooks,
   })
-  dispatcher.start()
+  relay.start()
 
-  const ingest = buildIngestServer({ db, dataKey, signal, metrics, telemetry })
+  const ingest = buildIngestServer({ ingest: relay.ingest })
   const admin = buildAdminServer({
     db,
     dbPath,
@@ -188,6 +208,7 @@ async function main(): Promise<void> {
     maskingKey,
     dataKey,
     telemetry,
+    secrets: secretResolver,
   })
   const metricsServer = buildMetricsServer({
     metrics,
@@ -223,7 +244,7 @@ async function main(): Promise<void> {
       uptime_s: Math.round((Date.now() - startedAt) / 1000),
     })
     await ingest.close() // stop accepting webhooks first
-    await dispatcher.stop() // drain the in-flight dispatch cycle
+    await relay.stop() // drain the in-flight dispatch cycle
     await telemetry.stop()
     await Promise.all([admin.close(), metricsServer.close()])
     db.close()

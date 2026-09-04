@@ -4,9 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildAdminServer } from '../src/admin/server.js'
 import { buildIngestServer } from '../src/ingest/server.js'
 import { buildMetricsServer } from '../src/metrics/server.js'
-import { EventsRepo } from '../src/db/repo/events.js'
-import { KvRepo } from '../src/db/repo/kv.js'
-import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb } from './helpers.js'
+import { EventsRepo, KvRepo } from '@endclose/relay-sqlite'
+import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb, setupRelay } from './helpers.js'
 import type { Metrics } from '../src/metrics/metrics.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
@@ -29,12 +28,7 @@ describe('admin API', () => {
       maskingKey: MASKING_KEY,
       dataKey: DATA_KEY,
     })
-    ingest = buildIngestServer({
-      db: setup.db,
-      dataKey: DATA_KEY,
-      signal: setup.signal,
-      metrics: setup.metrics,
-    })
+    ingest = buildIngestServer({ ingest: setupRelay(setup).ingest })
     await admin.ready()
     await ingest.ready()
   })
@@ -125,6 +119,14 @@ describe('admin API', () => {
     expect((await get('/status')).json().killswitch.routes_paused).toEqual(['payabli-settlements'])
     expect((await post('/routes/nope/pause', { paused: true })).statusCode).toBe(404)
 
+    // A pause belongs to the route: removing the route from config drops it, so a route
+    // re-added later with the same id does not come back silently paused.
+    const withoutSettlements = TEST_CONFIG_YAML.slice(TEST_CONFIG_YAML.indexOf('  - id: payabli-batches'))
+    expect((await post('/config', { yaml: 'routes:\n' + withoutSettlements })).statusCode).toBe(200)
+    expect((await get('/status')).json().killswitch.routes_paused).toEqual([])
+    expect((await post('/config', { yaml: TEST_CONFIG_YAML })).statusCode).toBe(200)
+    expect((await get('/status')).json().killswitch.routes_paused).toEqual([])
+
     await postWebhook()
     const [row] = events.list({})
     expect(row).not.toHaveProperty('payload_enc')
@@ -176,6 +178,10 @@ describe('admin API', () => {
       const bad = (await post('/config/validate', { yaml: 'routes: []' })).json()
       expect(bad.valid).toBe(false)
       expect(bad.error).toBeTruthy()
+
+      const typo = (await post('/config/validate', { yaml: TEST_CONFIG_YAML.replace('source: payabli\n', 'source: payabli_\n') })).json()
+      expect(typo.valid).toBe(false)
+      expect(typo.error).toMatch(/no adapter for source "payabli_"/)
 
       const good = (await post('/config/validate', { yaml: (await get('/config')).json().yaml })).json()
       expect(good.valid).toBe(true)
@@ -235,7 +241,7 @@ describe('config store resolution', () => {
   })
 
   it('empty DB with no seed file → bootstrap', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const { resolveActiveConfig } = await import('../src/config/store.js')
     const db = openDb(':memory:')
@@ -246,7 +252,7 @@ describe('config store resolution', () => {
   })
 
   it('a stored config that fails validation → invalid, never a throw (no crash loops)', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const { resolveActiveConfig } = await import('../src/config/store.js')
     const db = openDb(':memory:')
@@ -264,7 +270,7 @@ describe('config store resolution', () => {
 
 describe('recovery mode (stored config invalid)', () => {
   it('serves the raw document + error so the editor can repair it', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const db = openDb(':memory:')
     migrate(db)
@@ -302,7 +308,7 @@ describe('recovery mode (stored config invalid)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().restarting).toBe(true)
     expect(res.json().paused).toBe(true)
-    const { KvRepo } = await import('../src/db/repo/kv.js')
+    const { KvRepo } = await import('@endclose/relay-sqlite')
     expect(new KvRepo(db).globalKillswitch()).toBe('pause')
     const audit = (await admin.inject({ method: 'GET', url: '/audit', headers: AUTH })).json()
     expect(audit.find((a: any) => a.actor === 'recovery')?.action).toBe('killswitch.pause')
@@ -312,9 +318,9 @@ describe('recovery mode (stored config invalid)', () => {
   })
 
   it('a panic set before recovery is never loosened to pause', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
-    const { KvRepo } = await import('../src/db/repo/kv.js')
+    const { KvRepo } = await import('@endclose/relay-sqlite')
     const db = openDb(':memory:')
     migrate(db)
     new KvRepo(db).setGlobalKillswitch('panic')
@@ -344,7 +350,7 @@ describe('recovery mode (stored config invalid)', () => {
 
 describe('bootstrap mode', () => {
   it('serves the UI/status with mode=bootstrap, applies first config, fires callback once', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const db = openDb(':memory:')
     migrate(db)
@@ -417,12 +423,7 @@ describe('metrics server', () => {
 
   beforeEach(async () => {
     setup = setupDb()
-    ingest = buildIngestServer({
-      db: setup.db,
-      dataKey: DATA_KEY,
-      signal: setup.signal,
-      metrics: setup.metrics,
-    })
+    ingest = buildIngestServer({ ingest: setupRelay(setup).ingest })
     metricsServer = buildMetricsServer({
       metrics: setup.metrics,
       ready: () => true,

@@ -1,33 +1,55 @@
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import type { Db } from './db.js'
+import {
+  migrate as migrateStore,
+  MIGRATIONS as STORE_MIGRATIONS,
+  ROUTE_PAUSED_PREFIX,
+  type Db,
+  type Migration,
+} from '@endclose/relay-sqlite'
 
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'migrations')
+// Appliance-owned tables. `001_init.sql` (the store package's first migration) created
+// these too on databases from before the split; IF NOT EXISTS makes both paths converge.
+export const APPLIANCE_MIGRATIONS: Migration[] = [
+  {
+    name: '001_appliance.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS routes (
+  id          TEXT PRIMARY KEY,
+  source      TEXT NOT NULL,
+  paused      INTEGER NOT NULL DEFAULT 0,
+  config_json TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
 
-export function migrate(db: Db, dir: string = MIGRATIONS_DIR): void {
-  db.exec(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)',
-  )
-  const applied = new Set(
-    db
-      .prepare('SELECT name FROM schema_migrations')
-      .all()
-      .map((r) => (r as { name: string }).name),
-  )
-  const files = readdirSync(dir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-  for (const file of files) {
-    if (applied.has(file)) continue
-    const sql = readFileSync(join(dir, file), 'utf8')
-    const run = db.transaction(() => {
-      db.exec(sql)
-      db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(
-        file,
-        new Date().toISOString(),
-      )
-    })
-    run()
-  }
+CREATE TABLE IF NOT EXISTS config_versions (
+  id          INTEGER PRIMARY KEY,
+  applied_at  TEXT NOT NULL,
+  config_hash TEXT NOT NULL,
+  config_yaml TEXT NOT NULL,
+  applied_by  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id          INTEGER PRIMARY KEY,
+  at          TEXT NOT NULL,
+  actor       TEXT NOT NULL,
+  action      TEXT NOT NULL,
+  detail_json TEXT NOT NULL
+);
+`,
+  },
+  {
+    // Per-route pause moved from routes.paused into kv (route_paused.<id>) next to the
+    // global killswitch, so the store package never touches route definitions.
+    name: '003_route_pause_to_kv.sql',
+    sql: `
+INSERT INTO kv (key, value, updated_at)
+  SELECT '${ROUTE_PAUSED_PREFIX}' || id, '1', updated_at FROM routes WHERE paused = 1
+  ON CONFLICT (key) DO NOTHING;
+`,
+  },
+]
+
+/** Apply the store's migrations and then the appliance's. */
+export function migrate(db: Db): void {
+  migrateStore(db, [STORE_MIGRATIONS, APPLIANCE_MIGRATIONS])
 }

@@ -1,12 +1,10 @@
 import { statSync } from 'node:fs'
-import type { Db } from '../db/db.js'
-import { EventsRepo, type EventStatus } from '../db/repo/events.js'
+import { EventsRepo, KvRepo, type Db } from '@endclose/relay-sqlite'
+import type { EndCloseClient, EventStatus, RelayHooks } from '@endclose/relay'
 import { RoutesRepo } from '../db/repo/routes.js'
-import { KvRepo } from '../db/repo/kv.js'
 import { readActiveConfigRaw } from '../config/store.js'
 import { isDbPathPersistent } from '../db/persistence.js'
 import { log } from '../log.js'
-import type { EndCloseClient } from './endclose-client.js'
 
 export const TELEMETRY_ERROR_LIMIT = 20
 export const TELEMETRY_ERROR_WINDOW_MS = 60_000
@@ -171,6 +169,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
   const kv = new KvRepo(db)
   const routes = new RoutesRepo(db)
   const stats = new Map(events.perRouteStats().map((s) => [s.route_id, s]))
+  const paused = kv.pausedRoutes()
   let dbBytes = 0
   try {
     dbBytes = statSync(dbPath).size
@@ -188,7 +187,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
       return {
         id: r.id,
         source: r.source,
-        paused: routes.isPaused(r.id),
+        paused: paused.has(r.id),
         counts: s?.counts ?? {},
         last_delivered_at: s?.last_delivered_at ?? null,
         oldest_pending_at: s?.oldest_pending_at ?? null,
@@ -210,6 +209,19 @@ export class Telemetry {
 
   get enabled(): boolean {
     return this.opts.enabled && this.opts.client != null
+  }
+
+  /** Forward engine errors and batch rejections to the call-home. */
+  subscribe(hooks: RelayHooks): void {
+    hooks.on('error', (e) =>
+      this.captureError(e.kind, e.error, {
+        ...(e.op ? { op: e.op } : {}),
+        ...(e.routeId ? { route: e.routeId } : {}),
+      }),
+    )
+    hooks.on('batch.parked', (e) =>
+      this.capture('relay_batch_parked', { route: e.routeId, status: e.status, events: e.events }),
+    )
   }
 
   /** Register crash handlers and start the heartbeat loop. */

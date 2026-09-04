@@ -4,10 +4,18 @@ import { timingSafeEqual } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Db } from '../db/db.js'
-import { EventsRepo, type EventStatus } from '../db/repo/events.js'
+import { EventsRepo, KvRepo, type Db, type GlobalKillswitch } from '@endclose/relay-sqlite'
+import {
+  decrypt,
+  envSecrets,
+  hasSecret,
+  mapEvent,
+  MappingError,
+  type EventStatus,
+  type Json,
+  type SecretResolver,
+} from '@endclose/relay'
 import { RoutesRepo } from '../db/repo/routes.js'
-import { KvRepo, type GlobalKillswitch } from '../db/repo/kv.js'
 import { AuditRepo } from '../db/repo/audit.js'
 import { parseConfig } from '../config/load.js'
 import {
@@ -17,10 +25,7 @@ import {
   readActiveConfigRaw,
   saveConfig,
 } from '../config/store.js'
-import { mapEvent, MappingError } from '../forward/mapper.js'
-import { decrypt } from '../crypto/at-rest.js'
 import { isDbPathPersistent } from '../db/persistence.js'
-import type { Json } from '../mask/paths.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
 import type { Telemetry } from '../forward/telemetry.js'
@@ -47,6 +52,8 @@ export interface AdminDeps {
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
   telemetry?: Telemetry
+  /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
+  secrets?: SecretResolver
 }
 
 export function buildAdminServer(deps: AdminDeps): FastifyInstance {
@@ -54,6 +61,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   const routes = new RoutesRepo(deps.db)
   const kv = new KvRepo(deps.db)
   const audit = new AuditRepo(deps.db)
+  const secrets = deps.secrets ?? envSecrets()
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
   const mode = deps.mode ?? 'running'
@@ -109,31 +117,30 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       .prepare('SELECT config_hash, applied_at FROM config_versions ORDER BY id DESC LIMIT 1')
       .get() as { config_hash: string; applied_at: string } | undefined
     const activeConfig = getActiveConfig(deps.db)?.config
+    const allRoutes = routes.all()
+    const paused = kv.pausedRoutes()
     return {
       version: VERSION,
       mode,
       uptime_s: Math.round((now - deps.startedAt) / 1000),
       // Boot check surfaced to the UI: secrets referenced by the active config (plus the
       // appliance keys) and whether each is currently set in the environment.
-      secret_envs: activeConfig ? envStatus(activeConfig) : [],
+      secret_envs: activeConfig ? envStatus(activeConfig, secrets) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
       config_error: deps.configError ?? null,
       killswitch: {
         global: kv.globalKillswitch(),
-        routes_paused: routes
-          .all()
-          .filter((r) => routes.isPaused(r.id))
-          .map((r) => r.id),
+        routes_paused: allRoutes.filter((r) => paused.has(r.id)).map((r) => r.id),
       },
       queue: events.countByStatus(),
-      routes: routes.all().map((r) => {
+      routes: allRoutes.map((r) => {
         const s = stats.get(r.id)
         return {
           id: r.id,
           source: r.source,
           data_stream_key: r.map.data_stream_key,
-          paused: routes.isPaused(r.id),
+          paused: paused.has(r.id),
           counts: s?.counts ?? {},
           last_delivered_at: s?.last_delivered_at ?? null,
           oldest_pending_age_s: s?.oldest_pending_at
@@ -163,7 +170,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     const { paused } = (request.body ?? {}) as { paused?: boolean }
     if (!routes.get(id)) return reply.code(404).send({ error: 'unknown route' })
     if (typeof paused !== 'boolean') return reply.code(400).send({ error: 'paused must be boolean' })
-    routes.setPaused(id, paused)
+    kv.setRoutePaused(id, paused)
     audit.log(ACTOR, paused ? 'route.pause' : 'route.resume', { route: id })
     return { route: id, paused }
   })
@@ -268,7 +275,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
         valid: true,
         hash: loaded.hash,
         routes: loaded.config.routes.map((r) => r.id),
-        secret_envs: envStatus(loaded.config),
+        secret_envs: envStatus(loaded.config, secrets),
       }
     } catch (err) {
       return { valid: false, error: (err as Error).message }
@@ -280,7 +287,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     if (!yaml) return reply.code(400).send({ error: 'yaml required' })
     let loaded
     try {
-      loaded = saveConfig(deps.db, yaml, ACTOR)
+      loaded = saveConfig(deps.db, yaml, ACTOR, secrets)
     } catch (err) {
       return reply.code(422).send({ error: (err as Error).message })
     }
@@ -348,14 +355,14 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   return app
 }
 
-function envStatus(config: { routes: { auth: { secret_env: string } }[] }) {
+function envStatus(config: { routes: { auth: { secret_env: string } }[] }, secrets: SecretResolver) {
   const names = [
     'RELAY_DATA_KEY',
     'MASKING_HMAC_KEY',
     'ENDCLOSE_API_KEY',
     ...new Set(config.routes.map((r) => r.auth.secret_env)),
   ]
-  return names.map((name) => ({ name, set: Boolean(process.env[name]) }))
+  return names.map((name) => ({ name, set: hasSecret(secrets, name) }))
 }
 
 function dbBytes(dbPath: string): number {

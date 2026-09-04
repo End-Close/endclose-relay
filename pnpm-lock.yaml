@@ -8,12 +8,15 @@ importers:
 
   .:
     dependencies:
+      '@endclose/relay':
+        specifier: workspace:*
+        version: link:packages/core
+      '@endclose/relay-sqlite':
+        specifier: workspace:*
+        version: link:packages/store-sqlite
       '@fastify/static':
         specifier: ^10.1.2
         version: 10.1.2
-      better-sqlite3:
-        specifier: ^11.10.0
-        version: 11.10.0
       fastify:
         specifier: ^5.3.2
         version: 5.10.0
@@ -32,16 +35,13 @@ importers:
       yaml:
         specifier: ^2.7.0
         version: 2.9.0
-      zod:
-        specifier: ^3.24.2
-        version: 3.25.76
     devDependencies:
+      '@endclose/relay-store-contract':
+        specifier: workspace:*
+        version: link:packages/store-contract
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@7.3.6(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
-      '@types/better-sqlite3':
-        specifier: ^7.6.12
-        version: 7.6.13
       '@types/node':
         specifier: ^22.13.0
         version: 22.20.0
@@ -72,6 +72,41 @@ importers:
       vitest:
         specifier: ^3.0.9
         version: 3.2.7(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+
+  packages/core:
+    dependencies:
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      yaml:
+        specifier: ^2.7.0
+        version: 2.9.0
+
+  packages/store-contract:
+    devDependencies:
+      '@endclose/relay':
+        specifier: workspace:*
+        version: link:../core
+      vitest:
+        specifier: ^3.0.9
+        version: 3.2.7(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
+
+  packages/store-sqlite:
+    dependencies:
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
+    devDependencies:
+      '@endclose/relay':
+        specifier: workspace:*
+        version: link:../core
+      '@endclose/relay-store-contract':
+        specifier: workspace:*
+        version: link:../store-contract
+      '@types/better-sqlite3':
+        specifier: ^7.6.12
+        version: 7.6.13
 
 packages:
 

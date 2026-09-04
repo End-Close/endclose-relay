@@ -1,8 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs'
-import type { Db } from '../db/db.js'
+import { KvRepo, type Db } from '@endclose/relay-sqlite'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { AuditRepo } from '../db/repo/audit.js'
-import { parseConfig, resolveSecret, type LoadedConfig } from './load.js'
+import { parseConfig, type LoadedConfig } from './load.js'
+import { envSecrets, requireSecret, type SecretResolver } from '@endclose/relay'
 
 // The database is the source of truth for configuration: the latest config_versions row
 // IS the config. A relay.yaml file is only read once — to seed an empty database on
@@ -44,7 +45,11 @@ export type ActiveConfigState =
   // with the stored document and the validation error, so the operator can fix it.
   | { kind: 'invalid'; error: string }
 
-export function resolveActiveConfig(db: Db, seedPath: string | undefined): ActiveConfigState {
+export function resolveActiveConfig(
+  db: Db,
+  seedPath: string | undefined,
+  secrets: SecretResolver = envSecrets(),
+): ActiveConfigState {
   const raw = readActiveConfigRaw(db)
   if (raw) {
     try {
@@ -55,7 +60,7 @@ export function resolveActiveConfig(db: Db, seedPath: string | undefined): Activ
   }
   if (seedPath && existsSync(seedPath)) {
     try {
-      return { kind: 'ok', loaded: saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed') }
+      return { kind: 'ok', loaded: saveConfig(db, readFileSync(seedPath, 'utf8'), 'seed', secrets) }
     } catch (err) {
       return { kind: 'invalid', error: `seed file ${seedPath}: ${(err as Error).message}` }
     }
@@ -67,18 +72,28 @@ export function resolveActiveConfig(db: Db, seedPath: string | undefined): Activ
  * Validate and persist a new config version, rematerializing routes. The config is
  * routes-only, and ingest/dispatch read routes from the DB — every apply is fully live.
  */
-export function saveConfig(db: Db, yamlText: string, appliedBy: string): LoadedConfig {
+export function saveConfig(
+  db: Db,
+  yamlText: string,
+  appliedBy: string,
+  secrets: SecretResolver = envSecrets(),
+): LoadedConfig {
   const loaded = parseConfig(yamlText)
-  for (const route of loaded.config.routes) resolveSecret(route.auth.secret_env)
+  for (const route of loaded.config.routes) requireSecret(secrets, route.auth.secret_env)
 
   const routes = new RoutesRepo(db)
   const audit = new AuditRepo(db)
+  const kv = new KvRepo(db)
   const tx = db.transaction(() => {
     const last = db
       .prepare('SELECT config_hash FROM config_versions ORDER BY id DESC LIMIT 1')
       .get() as { config_hash: string } | undefined
     if (last?.config_hash === loaded.hash) return
     routes.upsertAll(loaded.config.routes)
+    // A pause belongs to a route; drop flags for routes no longer in the config so a
+    // later route with the same id does not come back silently paused.
+    const ids = new Set(loaded.config.routes.map((r) => r.id))
+    for (const paused of kv.pausedRoutes()) if (!ids.has(paused)) kv.setRoutePaused(paused, false)
     db.prepare(
       'INSERT INTO config_versions (applied_at, config_hash, config_yaml, applied_by) VALUES (?, ?, ?, ?)',
     ).run(new Date().toISOString(), loaded.hash, yamlText, appliedBy)
