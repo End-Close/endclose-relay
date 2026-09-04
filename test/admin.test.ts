@@ -30,7 +30,9 @@ describe('admin API', () => {
       dataKey: DATA_KEY,
     })
     ingest = buildIngestServer({
-      db: setup.db,
+      store: setup.store,
+      control: setup.control,
+      routes: setup.routes,
       dataKey: DATA_KEY,
       signal: setup.signal,
       hooks: setup.hooks,
@@ -418,7 +420,9 @@ describe('metrics server', () => {
   beforeEach(async () => {
     setup = setupDb()
     ingest = buildIngestServer({
-      db: setup.db,
+      store: setup.store,
+      control: setup.control,
+      routes: setup.routes,
       dataKey: DATA_KEY,
       signal: setup.signal,
       hooks: setup.hooks,

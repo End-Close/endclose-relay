@@ -1,11 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { Db } from '../db/db.js'
-import { EventsRepo } from '../db/repo/events.js'
-import { RoutesRepo } from '../db/repo/routes.js'
-import { KvRepo } from '../db/repo/kv.js'
-import { INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from '../db/busy.js'
+import { StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from '../engine/store.js'
 import { encrypt } from '../crypto/at-rest.js'
 import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
@@ -19,7 +15,9 @@ import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 const PERSISTED_HEADERS = ['content-type', 'user-agent']
 
 export interface IngestDeps {
-  db: Db
+  store: EventStore
+  control: ControlStore
+  routes: RouteProvider
   dataKey: Buffer
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal: EventEmitter
@@ -42,13 +40,10 @@ function escapeRe(s: string): string {
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const { db, dataKey, signal } = deps
+  const { store, control, routes, dataKey, signal } = deps
   const hooks = deps.hooks ?? new RelayHooks()
   const logger = deps.logger ?? log
   const secrets = deps.secrets ?? envSecrets()
-  const events = new EventsRepo(db)
-  const routes = new RoutesRepo(db)
-  const kv = new KvRepo(db)
 
   const app = Fastify({
     logger: false,
@@ -66,7 +61,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
   app.post('/ingest/:routeId', async (request, reply) => {
     const { routeId } = request.params as { routeId: string }
-    const route = routes.get(routeId)
+    const route = await routes.get(routeId)
     if (!route) return reply.code(404).send({ error: 'unknown route' })
     const rawBody = request.body as Buffer
     const bodyBytes = Buffer.isBuffer(rawBody) ? rawBody.length : 0
@@ -74,7 +69,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
       hooks.emit('ingest', { routeId, outcome, eventType, bodyBytes })
 
     // Panic refuses at the door; the processor's own retries carry the window.
-    if (kv.globalKillswitch() === 'panic') {
+    if ((await control.getKillswitch()) === 'panic') {
       ingested('panic')
       return reply.code(503).send({ error: 'relay is in panic mode' })
     }
@@ -130,43 +125,38 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
       ),
     )
 
-    let insertedId: number | null
+    let inserted
     try {
-      insertedId = await withBusyRetry(
-        'insert',
-        () =>
-          events.insert({
-            route_id: routeId,
-            source: route.source,
-            event_id: eventId,
-            event_type: eventType,
-            payload_enc: ciphertext,
-            payload_iv: iv,
-            headers_json: headersJson,
-            received_at: new Date().toISOString(),
-            status: filtered ? 'dropped_by_filter' : 'pending',
-            idempotency_key:
-              'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
-          }),
-        { attempts: INGEST_BUSY_RETRY_ATTEMPTS, logger },
-      )
+      inserted = await store.insert({
+        route_id: routeId,
+        source: route.source,
+        event_id: eventId,
+        event_type: eventType,
+        payload_enc: ciphertext,
+        payload_iv: iv,
+        headers_json: headersJson,
+        received_at: new Date().toISOString(),
+        status: filtered ? 'dropped_by_filter' : 'pending',
+        idempotency_key:
+          'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
+      })
     } catch (err) {
       logger.error('ingest persist failed', { route: routeId, error: (err as Error).message })
       hooks.emit('error', { kind: 'ingest_persist', error: err, routeId })
-      const retryable = isSqliteBusy(err)
+      const retryable = err instanceof StoreUnavailableError
       return reply
         .code(retryable ? 503 : 500)
         .send({ error: retryable ? 'temporarily unavailable' : 'internal error' })
     }
 
-    if (insertedId === null) {
+    if (inserted.duplicate) {
       ingested('duplicate', eventType)
       logger.info('duplicate event acked', { route: routeId, event_type: eventType })
       return reply.code(200).send({ status: 'duplicate' })
     }
 
     ingested(filtered ? 'filtered' : 'accepted', eventType)
-    hooks.emit('stored', { routeId, id: insertedId, filtered: Boolean(filtered) })
+    hooks.emit('stored', { routeId, id: inserted.id, filtered: Boolean(filtered) })
     logger.info('event ingested', {
       route: routeId,
       event_type: eventType,

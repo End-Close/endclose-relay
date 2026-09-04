@@ -96,7 +96,9 @@ describe('ingest → store → forward', () => {
     events = new EventsRepo(db)
     const client = new EndCloseClient(`http://127.0.0.1:${port}/v1`, 'test-api-key')
     dispatcher = new Dispatcher({
-      db,
+      store: setup.store,
+      control: setup.control,
+      routes: setup.routes,
       settings: testSettings(),
       client,
       dataKey: DATA_KEY,
@@ -104,7 +106,14 @@ describe('ingest → store → forward', () => {
       signal: setup.signal,
       hooks: setup.hooks,
     })
-    ingest = buildIngestServer({ db, dataKey: DATA_KEY, signal: setup.signal, hooks: setup.hooks })
+    ingest = buildIngestServer({
+      store: setup.store,
+      control: setup.control,
+      routes: setup.routes,
+      dataKey: DATA_KEY,
+      signal: setup.signal,
+      hooks: setup.hooks,
+    })
     await ingest.ready()
     dispatcher.start()
   })

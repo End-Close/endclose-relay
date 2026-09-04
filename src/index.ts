@@ -20,6 +20,7 @@ import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
 import { envSecrets } from './engine/secrets.js'
 import { RelayHooks } from './engine/hooks.js'
+import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from './db/sqlite-store.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
@@ -178,8 +179,13 @@ async function main(): Promise<void> {
     log.error('ENDCLOSE_API_KEY not set — buffering only, nothing will forward')
   }
 
+  const store = new SqliteEventStore(db)
+  const control = new SqliteControlStore(db)
+  const routes = new DbRouteProvider(db)
   const dispatcher = new Dispatcher({
-    db,
+    store,
+    control,
+    routes,
     settings,
     client,
     dataKey,
@@ -190,7 +196,9 @@ async function main(): Promise<void> {
   dispatcher.start()
 
   const ingest = buildIngestServer({
-    db,
+    store,
+    control,
+    routes,
     dataKey,
     signal,
     hooks,

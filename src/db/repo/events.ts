@@ -1,44 +1,16 @@
 import type { Db } from '../db.js'
 
-export type EventStatus =
-  | 'pending'
-  | 'retry'
-  | 'delivering'
-  | 'delivered'
-  | 'parked'
-  | 'dropped_by_filter'
+import type {
+  EventRecord,
+  EventStatus,
+  EventSummary,
+  NewEvent,
+  RouteStats,
+} from '../../engine/store.js'
 
-export interface EventRow {
-  id: number
-  route_id: string
-  source: string
-  event_id: string
-  event_type: string | null
-  payload_enc: Buffer
-  payload_iv: Buffer
-  headers_json: string
-  received_at: string
-  status: EventStatus
-  attempts: number
-  next_attempt_at: string | null
-  delivered_at: string | null
-  bulk_request_id: string | null
-  last_error: string | null
-  idempotency_key: string
-}
-
-export interface InsertEvent {
-  route_id: string
-  source: string
-  event_id: string
-  event_type: string | null
-  payload_enc: Buffer
-  payload_iv: Buffer
-  headers_json: string
-  received_at: string
-  status: EventStatus
-  idempotency_key: string
-}
+export type { EventStatus, RouteStats, EventSummary }
+export type EventRow = EventRecord
+export type InsertEvent = NewEvent
 
 export class EventsRepo {
   constructor(private db: Db) {}
@@ -311,12 +283,5 @@ export class EventsRepo {
   }
 }
 
-export interface RouteStats {
-  route_id: string
-  counts: Partial<Record<EventStatus, number>>
-  last_delivered_at: string | null
-  oldest_pending_at: string | null
-}
 
-export type EventSummary = Omit<EventRow, 'payload_enc' | 'payload_iv' | 'headers_json' | 'idempotency_key'>
 

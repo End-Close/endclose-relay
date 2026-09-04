@@ -10,6 +10,7 @@ import { Metrics } from '../src/metrics/metrics.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
 import { RelayHooks } from '../src/engine/hooks.js'
+import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from '../src/db/sqlite-store.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -60,6 +61,9 @@ export function setupDb(ecPort = 9999): {
   signal: EventEmitter
   metrics: Metrics
   hooks: RelayHooks
+  store: SqliteEventStore
+  control: SqliteControlStore
+  routes: DbRouteProvider
 } {
   process.env.ENDCLOSE_API_KEY = 'test-api-key'
   process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer test-webhook-secret'
@@ -77,7 +81,15 @@ export function setupDb(ecPort = 9999): {
   })
   const hooks = new RelayHooks()
   metrics.subscribe(hooks)
-  return { db, signal: new EventEmitter(), metrics, hooks }
+  return {
+    db,
+    signal: new EventEmitter(),
+    metrics,
+    hooks,
+    store: new SqliteEventStore(db),
+    control: new SqliteControlStore(db),
+    routes: new DbRouteProvider(db),
+  }
 }
 
 export function testConfig(ecPort = 9999) {

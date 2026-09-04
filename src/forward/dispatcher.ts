@@ -1,10 +1,6 @@
 import type { EventEmitter } from 'node:events'
-import type { Db } from '../db/db.js'
 import type { RuntimeSettings } from '../config/runtime.js'
-import { EventsRepo, type EventRow } from '../db/repo/events.js'
-import { RoutesRepo } from '../db/repo/routes.js'
-import { KvRepo } from '../db/repo/kv.js'
-import { withBusyRetry } from '../db/busy.js'
+import type { ControlStore, EventRecord as EventRow, EventStore, RouteProvider } from '../engine/store.js'
 import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
 import { RelayHooks } from '../engine/hooks.js'
@@ -27,7 +23,9 @@ const PRUNE_BATCH = 50
 const PRUNE_YIELD_MS = 25
 
 export interface DispatcherDeps {
-  db: Db
+  store: EventStore
+  control: ControlStore
+  routes: RouteProvider
   settings: Pick<RuntimeSettings, 'dispatch' | 'retention'>
   client: EndCloseClient
   dataKey: Buffer
@@ -38,9 +36,6 @@ export interface DispatcherDeps {
 }
 
 export class Dispatcher {
-  private events: EventsRepo
-  private routes: RoutesRepo
-  private kv: KvRepo
   private log: Logger
   private hooks: RelayHooks
   private running = false
@@ -52,25 +47,14 @@ export class Dispatcher {
   private pruneTimer: NodeJS.Timeout | undefined
 
   constructor(private deps: DispatcherDeps) {
-    this.events = new EventsRepo(deps.db)
-    this.routes = new RoutesRepo(deps.db)
-    this.kv = new KvRepo(deps.db)
     this.log = deps.logger ?? log
     this.hooks = deps.hooks ?? new RelayHooks()
   }
 
   start(): void {
     this.running = true
-    // Events stuck mid-dispatch from a previous crash go back on the queue.
-    try {
-      const recovered = this.events.recoverDelivering(new Date().toISOString())
-      if (recovered > 0) this.log.info('recovered in-flight events after restart', { count: recovered })
-    } catch (err) {
-      this.needsRecover = true
-      this.log.error('boot recover delivering failed', { error: (err as Error).message })
-      this.hooks.emit('error', { kind: 'recover_delivering', error: err })
-    }
-
+    // Events stuck mid-dispatch from a previous crash go back on the queue on the first cycle.
+    this.needsRecover = true
     this.deps.signal.on('event', () => this.wake())
     this.timer = setInterval(() => this.wake(), this.deps.settings.dispatch.poll_interval_ms)
     this.pruneTimer = setInterval(() => this.schedulePrune(), PRUNE_INTERVAL_MS)
@@ -111,36 +95,28 @@ export class Dispatcher {
     const now = new Date().toISOString()
     if (this.needsRecover) {
       try {
-        const recovered = await this.dbOp('recoverDelivering', () =>
-          this.events.recoverDelivering(now),
-        )
+        const recovered = await this.deps.store.recoverDelivering(now)
         this.needsRecover = false
-        if (recovered > 0) this.log.warn('recovered stuck delivering events', { count: recovered })
+        if (recovered > 0) this.log.info('recovered in-flight events', { count: recovered })
       } catch (err) {
         this.log.error('recover delivering failed', { error: (err as Error).message })
         this.hooks.emit('error', { kind: 'recover_delivering', error: err })
       }
     }
 
-    if ((await this.dbOp('killswitch', () => this.kv.globalKillswitch())) !== 'none') {
+    if ((await this.deps.control.getKillswitch()) !== 'none') {
       return // pause/panic: buffer, do not forward
     }
 
-    await this.dbOp('parkExpired', () =>
-      this.events.parkExpired(now, this.deps.settings.dispatch.park_after_ms),
-    )
+    await this.deps.store.parkExpired(now, this.deps.settings.dispatch.park_after_ms)
 
-    for (const routeId of await this.dbOp('routesWithDueEvents', () =>
-      this.events.routesWithDueEvents(now),
-    )) {
+    for (const routeId of await this.deps.store.routesWithDueEvents(now)) {
       if (!this.running) return
-      if (await this.dbOp('isPaused', () => this.routes.isPaused(routeId))) continue
-      const route = await this.dbOp('routes.get', () => this.routes.get(routeId))
+      if (await this.deps.control.isRoutePaused(routeId)) continue
+      const route = await this.deps.routes.get(routeId)
       if (!route) continue
 
-      const claimed = await this.dbOp('claimDue', () =>
-        this.events.claimDue(routeId, now, this.deps.settings.dispatch.batch_max),
-      )
+      const claimed = await this.deps.store.claimDue(routeId, now, this.deps.settings.dispatch.batch_max)
       if (claimed.length === 0) continue
       try {
         await this.deliverBatch(route.id, claimed)
@@ -151,7 +127,7 @@ export class Dispatcher {
   }
 
   private async deliverBatch(routeId: string, claimed: EventRow[]): Promise<void> {
-    const route = await this.dbOp('routes.get', () => this.routes.get(routeId))
+    const route = await this.deps.routes.get(routeId)
     if (!route) return
 
     // Map each event independently; unmappable events park without wedging the batch.
@@ -169,9 +145,7 @@ export class Dispatcher {
         mapped.push(event)
       } catch (err) {
         if (err instanceof MappingError) {
-          await this.dbOp('markParked', () =>
-            this.events.markParked([event.id], `mapping failed: ${err.message}`),
-          )
+          await this.deps.store.markParked([event.id], `mapping failed: ${err.message}`)
           this.hooks.emit('forward', { routeId, result: 'parked', count: 1 })
           this.log.warn('event parked: mapping failed', {
             route: routeId,
@@ -198,9 +172,7 @@ export class Dispatcher {
     } catch (err) {
       const ids = mapped.map((e) => e.id)
       if (err instanceof PermanentHttpError && (err.status === 400 || err.status === 422)) {
-        await this.dbOp('markParked', () =>
-          this.events.markParked(ids, `${err.message}: ${err.body}`),
-        )
+        await this.deps.store.markParked(ids, `${err.message}: ${err.body}`)
         this.hooks.emit('forward', { routeId, result: 'parked', count: ids.length })
         this.log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
         this.hooks.emit('batch.parked', { routeId, status: err.status, events: ids.length })
@@ -213,7 +185,7 @@ export class Dispatcher {
           this.deps.settings.dispatch.backoff_base_ms,
           this.deps.settings.dispatch.backoff_cap_ms,
         )
-        await this.dbOp('markFailed', () => this.events.markFailed(ids, next, (err as Error).message))
+        await this.deps.store.markFailed(ids, next, (err as Error).message)
         this.hooks.emit('forward', { routeId, result: 'retried', count: ids.length })
         this.log.warn('batch delivery failed, will retry', {
           route: routeId,
@@ -269,29 +241,23 @@ export class Dispatcher {
         const key = extResultKey(event, index)
         ;(failed.has(key.externalId) || failed.has(key.index) ? parked : ok).push(event)
       })
-      await this.dbOp('markParked', () =>
-        this.events.markParked(
-          parked.map((e) => e.id),
-          'rejected by End Close bulk processing',
-        ),
+      await this.deps.store.markParked(
+        parked.map((e) => e.id),
+        'rejected by End Close bulk processing',
       )
-      await this.dbOp('markDelivered', () =>
-        this.events.markDelivered(
-          ok.map((e) => e.id),
-          deliveredAt,
-          bulkRequestId,
-        ),
+      await this.deps.store.markDelivered(
+        ok.map((e) => e.id),
+        deliveredAt,
+        bulkRequestId,
       )
       this.recordDelivered(ok, deliveredAt)
       for (const e of parked) this.hooks.emit('forward', { routeId: e.route_id, result: 'parked', count: 1 })
       return
     }
-    await this.dbOp('markDelivered', () =>
-      this.events.markDelivered(
-        mapped.map((e) => e.id),
-        deliveredAt,
-        bulkRequestId,
-      ),
+    await this.deps.store.markDelivered(
+      mapped.map((e) => e.id),
+      deliveredAt,
+      bulkRequestId,
     )
     this.recordDelivered(mapped, deliveredAt)
   }
@@ -316,8 +282,11 @@ export class Dispatcher {
     try {
       for (;;) {
         if (!this.running) break
-        const batch = await this.dbOp('prune', () =>
-          this.events.pruneBatch(now, retention.delivered_days, retention.ledger_days, PRUNE_BATCH),
+        const batch = await this.deps.store.pruneBatch(
+          now,
+          retention.delivered_days,
+          retention.ledger_days,
+          PRUNE_BATCH,
         )
         wiped += batch.wiped
         deleted += batch.deleted
@@ -337,9 +306,7 @@ export class Dispatcher {
   private async releaseLeftover(claimed: EventRow[], error: string): Promise<void> {
     const ids = claimed.map((e) => e.id)
     try {
-      const n = await this.dbOp('releaseDelivering', () =>
-        this.events.releaseDelivering(ids, new Date().toISOString(), error),
-      )
+      const n = await this.deps.store.releaseDelivering(ids, new Date().toISOString(), error)
       if (n > 0) {
         this.log.warn('released leftover delivering events', { count: n, error })
       }
@@ -350,15 +317,6 @@ export class Dispatcher {
         count: ids.length,
       })
       this.hooks.emit('error', { kind: 'recover_delivering', error: err })
-    }
-  }
-
-  private async dbOp<T>(op: string, fn: () => T): Promise<T> {
-    try {
-      return await withBusyRetry(op, fn, { logger: this.log })
-    } catch (err) {
-      ;(err as { op?: string }).op = op
-      throw err
     }
   }
 }
