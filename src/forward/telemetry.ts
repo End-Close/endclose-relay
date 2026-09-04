@@ -7,6 +7,7 @@ import { readActiveConfigRaw } from '../config/store.js'
 import { isDbPathPersistent } from '../db/persistence.js'
 import { log } from '../log.js'
 import type { EndCloseClient } from './endclose-client.js'
+import type { RelayHooks } from '../engine/hooks.js'
 
 export const TELEMETRY_ERROR_LIMIT = 20
 export const TELEMETRY_ERROR_WINDOW_MS = 60_000
@@ -210,6 +211,19 @@ export class Telemetry {
 
   get enabled(): boolean {
     return this.opts.enabled && this.opts.client != null
+  }
+
+  /** Forward engine errors and batch rejections to the call-home. */
+  subscribe(hooks: RelayHooks): void {
+    hooks.on('error', (e) =>
+      this.captureError(e.kind, e.error, {
+        ...(e.op ? { op: e.op } : {}),
+        ...(e.routeId ? { route: e.routeId } : {}),
+      }),
+    )
+    hooks.on('batch.parked', (e) =>
+      this.capture('relay_batch_parked', { route: e.routeId, status: e.status, events: e.events }),
+    )
   }
 
   /** Register crash handlers and start the heartbeat loop. */

@@ -33,7 +33,7 @@ describe('admin API', () => {
       db: setup.db,
       dataKey: DATA_KEY,
       signal: setup.signal,
-      metrics: setup.metrics,
+      hooks: setup.hooks,
     })
     await admin.ready()
     await ingest.ready()
@@ -421,7 +421,7 @@ describe('metrics server', () => {
       db: setup.db,
       dataKey: DATA_KEY,
       signal: setup.signal,
-      metrics: setup.metrics,
+      hooks: setup.hooks,
     })
     metricsServer = buildMetricsServer({
       metrics: setup.metrics,

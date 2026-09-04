@@ -9,6 +9,7 @@ import { deriveKey } from '../src/crypto/keys.js'
 import { Metrics } from '../src/metrics/metrics.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
+import { RelayHooks } from '../src/engine/hooks.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 
@@ -54,7 +55,12 @@ routes:
         paypoint: Paypoint
 `
 
-export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics: Metrics } {
+export function setupDb(ecPort = 9999): {
+  db: Db
+  signal: EventEmitter
+  metrics: Metrics
+  hooks: RelayHooks
+} {
   process.env.ENDCLOSE_API_KEY = 'test-api-key'
   process.env.PAYABLI_WEBHOOK_SECRET = 'Bearer test-webhook-secret'
   process.env.RELAY_DATA_KEY = 'test-data-key-0123456789'
@@ -69,7 +75,9 @@ export function setupDb(ecPort = 9999): { db: Db; signal: EventEmitter; metrics:
     killswitch: () => kv.globalKillswitch(),
     dbBytes: () => 0,
   })
-  return { db, signal: new EventEmitter(), metrics }
+  const hooks = new RelayHooks()
+  metrics.subscribe(hooks)
+  return { db, signal: new EventEmitter(), metrics, hooks }
 }
 
 export function testConfig(ecPort = 9999) {

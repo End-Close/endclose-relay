@@ -9,8 +9,7 @@ import { INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from '../db/b
 import { encrypt } from '../crypto/at-rest.js'
 import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
-import type { Metrics } from '../metrics/metrics.js'
-import type { Telemetry } from '../forward/telemetry.js'
+import { RelayHooks, type IngestOutcome } from '../engine/hooks.js'
 import { log, type Logger } from '../log.js'
 import { envSecrets, type SecretResolver } from '../engine/secrets.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
@@ -24,8 +23,7 @@ export interface IngestDeps {
   dataKey: Buffer
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal: EventEmitter
-  metrics: Metrics
-  telemetry?: Telemetry
+  hooks?: RelayHooks
   logger?: Logger
   /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
   secrets?: SecretResolver
@@ -44,7 +42,8 @@ function escapeRe(s: string): string {
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const { db, dataKey, signal, metrics, telemetry } = deps
+  const { db, dataKey, signal } = deps
+  const hooks = deps.hooks ?? new RelayHooks()
   const logger = deps.logger ?? log
   const secrets = deps.secrets ?? envSecrets()
   const events = new EventsRepo(db)
@@ -69,20 +68,23 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     const { routeId } = request.params as { routeId: string }
     const route = routes.get(routeId)
     if (!route) return reply.code(404).send({ error: 'unknown route' })
+    const rawBody = request.body as Buffer
+    const bodyBytes = Buffer.isBuffer(rawBody) ? rawBody.length : 0
+    const ingested = (outcome: IngestOutcome, eventType: string | null = null) =>
+      hooks.emit('ingest', { routeId, outcome, eventType, bodyBytes })
 
     // Panic refuses at the door; the processor's own retries carry the window.
     if (kv.globalKillswitch() === 'panic') {
-      metrics.ingest(routeId, 'panic')
+      ingested('panic')
       return reply.code(503).send({ error: 'relay is in panic mode' })
     }
 
-    const rawBody = request.body as Buffer
     if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
-      metrics.ingest(routeId, 'rejected_json')
+      ingested('rejected_json')
       return reply.code(400).send({ error: 'empty body' })
     }
     if (rawBody.length > route.max_body_bytes) {
-      metrics.ingest(routeId, 'rejected_size')
+      ingested('rejected_size')
       return reply.code(413).send({ error: 'body too large' })
     }
 
@@ -95,7 +97,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     }
     const verdict = adapter.verify(raw, route, { secret })
     if (!verdict.ok) {
-      metrics.ingest(routeId, 'rejected_auth')
+      ingested('rejected_auth')
       logger.warn('ingest rejected', { route: routeId, reason: verdict.reason })
       return reply.code(401).send({ error: 'verification failed' })
     }
@@ -104,7 +106,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     try {
       body = JSON.parse(rawBody.toString('utf8')) as Json
     } catch {
-      metrics.ingest(routeId, 'rejected_json')
+      ingested('rejected_json')
       return reply.code(400).send({ error: 'invalid JSON' })
     }
 
@@ -150,7 +152,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
       )
     } catch (err) {
       logger.error('ingest persist failed', { route: routeId, error: (err as Error).message })
-      telemetry?.captureError('ingest_persist', err, { route: routeId })
+      hooks.emit('error', { kind: 'ingest_persist', error: err, routeId })
       const retryable = isSqliteBusy(err)
       return reply
         .code(retryable ? 503 : 500)
@@ -158,12 +160,13 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     }
 
     if (insertedId === null) {
-      metrics.ingest(routeId, 'duplicate')
+      ingested('duplicate', eventType)
       logger.info('duplicate event acked', { route: routeId, event_type: eventType })
       return reply.code(200).send({ status: 'duplicate' })
     }
 
-    metrics.ingest(routeId, filtered ? 'filtered' : 'accepted')
+    ingested(filtered ? 'filtered' : 'accepted', eventType)
+    hooks.emit('stored', { routeId, id: insertedId, filtered: Boolean(filtered) })
     logger.info('event ingested', {
       route: routeId,
       event_type: eventType,

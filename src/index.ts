@@ -19,6 +19,7 @@ import { EventsRepo } from './db/repo/events.js'
 import { KvRepo } from './db/repo/kv.js'
 import { VERSION } from './version.js'
 import { envSecrets } from './engine/secrets.js'
+import { RelayHooks } from './engine/hooks.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
@@ -167,6 +168,9 @@ async function main(): Promise<void> {
 
   const metrics = buildMetrics(db, dbPath)
   const signal = new EventEmitter()
+  const hooks = new RelayHooks()
+  metrics.subscribe(hooks)
+  telemetry.subscribe(hooks)
   // A missing API key must not crash the relay: webhooks keep buffering (the point of
   // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
   // until the key is provided and the container restarted.
@@ -181,8 +185,7 @@ async function main(): Promise<void> {
     dataKey,
     maskingKey,
     signal,
-    metrics,
-    telemetry,
+    hooks,
   })
   dispatcher.start()
 
@@ -190,8 +193,7 @@ async function main(): Promise<void> {
     db,
     dataKey,
     signal,
-    metrics,
-    telemetry,
+    hooks,
     secrets: secretResolver,
   })
   const admin = buildAdminServer({

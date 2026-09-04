@@ -7,8 +7,7 @@ import { KvRepo } from '../db/repo/kv.js'
 import { withBusyRetry } from '../db/busy.js'
 import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
-import type { Metrics } from '../metrics/metrics.js'
-import type { Telemetry } from './telemetry.js'
+import { RelayHooks } from '../engine/hooks.js'
 import { log, type Logger } from '../log.js'
 import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { nextAttemptAt } from './backoff.js'
@@ -34,8 +33,7 @@ export interface DispatcherDeps {
   dataKey: Buffer
   maskingKey: Buffer
   signal: EventEmitter
-  metrics: Metrics
-  telemetry?: Telemetry
+  hooks?: RelayHooks
   logger?: Logger
 }
 
@@ -44,6 +42,7 @@ export class Dispatcher {
   private routes: RoutesRepo
   private kv: KvRepo
   private log: Logger
+  private hooks: RelayHooks
   private running = false
   private wakeRequested = false
   private needsRecover = false
@@ -57,6 +56,7 @@ export class Dispatcher {
     this.routes = new RoutesRepo(deps.db)
     this.kv = new KvRepo(deps.db)
     this.log = deps.logger ?? log
+    this.hooks = deps.hooks ?? new RelayHooks()
   }
 
   start(): void {
@@ -68,7 +68,7 @@ export class Dispatcher {
     } catch (err) {
       this.needsRecover = true
       this.log.error('boot recover delivering failed', { error: (err as Error).message })
-      this.deps.telemetry?.captureError('recover_delivering', err)
+      this.hooks.emit('error', { kind: 'recover_delivering', error: err })
     }
 
     this.deps.signal.on('event', () => this.wake())
@@ -101,7 +101,7 @@ export class Dispatcher {
             error: (err as Error).message,
             ...(op ? { op } : {}),
           })
-          this.deps.telemetry?.captureError('dispatch_cycle', err, op ? { op } : {})
+          this.hooks.emit('error', { kind: 'dispatch_cycle', error: err, ...(op ? { op } : {}) })
         }
       }
     })
@@ -118,7 +118,7 @@ export class Dispatcher {
         if (recovered > 0) this.log.warn('recovered stuck delivering events', { count: recovered })
       } catch (err) {
         this.log.error('recover delivering failed', { error: (err as Error).message })
-        this.deps.telemetry?.captureError('recover_delivering', err)
+        this.hooks.emit('error', { kind: 'recover_delivering', error: err })
       }
     }
 
@@ -172,7 +172,7 @@ export class Dispatcher {
           await this.dbOp('markParked', () =>
             this.events.markParked([event.id], `mapping failed: ${err.message}`),
           )
-          this.deps.metrics.forward(routeId, 'parked')
+          this.hooks.emit('forward', { routeId, result: 'parked', count: 1 })
           this.log.warn('event parked: mapping failed', {
             route: routeId,
             event_id: event.event_id,
@@ -194,19 +194,16 @@ export class Dispatcher {
         events: mapped.length,
         bulk_request_id: summary.id,
       })
+      this.hooks.emit('batch.forwarded', { routeId, events: mapped.length, bulkRequestId: summary.id })
     } catch (err) {
       const ids = mapped.map((e) => e.id)
       if (err instanceof PermanentHttpError && (err.status === 400 || err.status === 422)) {
         await this.dbOp('markParked', () =>
           this.events.markParked(ids, `${err.message}: ${err.body}`),
         )
-        this.deps.metrics.forward(routeId, 'parked', ids.length)
+        this.hooks.emit('forward', { routeId, result: 'parked', count: ids.length })
         this.log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
-        this.deps.telemetry?.capture('relay_batch_parked', {
-          route: routeId,
-          status: err.status,
-          events: ids.length,
-        })
+        this.hooks.emit('batch.parked', { routeId, status: err.status, events: ids.length })
       } else {
         // Transient network failure, 5xx, or auth problem (fixable server-side or in
         // config): schedule redelivery with backoff. attempts is per-event.
@@ -217,7 +214,7 @@ export class Dispatcher {
           this.deps.settings.dispatch.backoff_cap_ms,
         )
         await this.dbOp('markFailed', () => this.events.markFailed(ids, next, (err as Error).message))
-        this.deps.metrics.forward(routeId, 'retried', ids.length)
+        this.hooks.emit('forward', { routeId, result: 'retried', count: ids.length })
         this.log.warn('batch delivery failed, will retry', {
           route: routeId,
           events: ids.length,
@@ -286,7 +283,7 @@ export class Dispatcher {
         ),
       )
       this.recordDelivered(ok, deliveredAt)
-      for (const e of parked) this.deps.metrics.forward(e.route_id, 'parked')
+      for (const e of parked) this.hooks.emit('forward', { routeId: e.route_id, result: 'parked', count: 1 })
       return
     }
     await this.dbOp('markDelivered', () =>
@@ -301,8 +298,8 @@ export class Dispatcher {
 
   private recordDelivered(events: EventRow[], deliveredAt: string): void {
     for (const e of events) {
-      this.deps.metrics.forward(e.route_id, 'delivered')
-      this.deps.metrics.observeDeliveryLag(e.received_at, deliveredAt)
+      this.hooks.emit('forward', { routeId: e.route_id, result: 'delivered', count: 1 })
+      this.hooks.emit('delivered', { routeId: e.route_id, receivedAt: e.received_at, deliveredAt })
     }
   }
 
@@ -324,8 +321,7 @@ export class Dispatcher {
         )
         wiped += batch.wiped
         deleted += batch.deleted
-        this.deps.metrics.pruned('wiped', batch.wiped)
-        this.deps.metrics.pruned('deleted', batch.deleted)
+        this.hooks.emit('prune', { wiped: batch.wiped, deleted: batch.deleted })
         if (batch.wiped === 0 && batch.deleted === 0) break
         await sleep(PRUNE_YIELD_MS)
       }
@@ -334,7 +330,7 @@ export class Dispatcher {
       // Prune must not block forwarding. lastPruneAt used to be set before prune()
       // ran, so a lock error skipped both dispatch and the next hour of retention.
       this.log.error('retention prune failed', { error: (err as Error).message })
-      this.deps.telemetry?.captureError('prune', err)
+      this.hooks.emit('error', { kind: 'prune', error: err })
     }
   }
 
@@ -353,7 +349,7 @@ export class Dispatcher {
         error: (err as Error).message,
         count: ids.length,
       })
-      this.deps.telemetry?.captureError('recover_delivering', err)
+      this.hooks.emit('error', { kind: 'recover_delivering', error: err })
     }
   }
 
