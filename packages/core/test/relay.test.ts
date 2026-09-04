@@ -55,10 +55,11 @@ const req = (body: Buffer, auth = 'Bearer test-webhook-secret') => ({
 describe('createRelay (embedded engine)', () => {
   it('ingests, deduplicates, and forwards mapped records on dispatchOnce', async () => {
     const { relay, ec } = makeRelay()
-    expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({
-      status: 200,
-      outcome: 'accepted',
-    })
+    const accepted = await relay.ingest('payabli-settlements', req(settlement))
+    expect(accepted).toMatchObject({ status: 200, outcome: 'accepted' })
+    expect(typeof accepted.id).toBe('string')
+    const settled: unknown[] = []
+    relay.on('settled', (e) => settled.push(e))
     expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({
       status: 200,
       outcome: 'duplicate',
@@ -70,6 +71,7 @@ describe('createRelay (embedded engine)', () => {
     expect(await relay.ingest('nope', req(settlement))).toMatchObject({ status: 404, outcome: 'unknown_route' })
 
     expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+    expect(settled).toEqual([{ id: accepted.id, routeId: 'payabli-settlements', result: 'delivered' }])
     expect(ec.posts.length).toBe(1)
     expect(ec.posts[0]!.headers.get('x-api-key')).toBe('k')
     expect(ec.posts[0]!.body.records[0]).toMatchObject({
@@ -96,6 +98,38 @@ describe('createRelay (embedded engine)', () => {
     expect(await relay.dispatchOnce()).toEqual({ delivered: 0, retried: 0, parked: 0 })
     await relay.control.setKillswitch('none')
     expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+  })
+
+  it('flush drains through transient failures and reports what is left', async () => {
+    const { relay, ec } = makeRelay()
+    ec.fail(3) // the first batch exhausts in-request retries and is scheduled for backoff
+    const { id } = await relay.ingest('payabli-settlements', req(settlement))
+    const settled: { id: string; result: string }[] = []
+    relay.on('settled', (e) => settled.push({ id: e.id, result: e.result }))
+
+    const flushed = await relay.flush({ timeoutMs: 10_000 })
+    expect(flushed).toMatchObject({ delivered: 1, retried: 1, parked: 0, drained: true })
+    expect(flushed.reason).toBeUndefined()
+    expect(settled).toEqual([
+      { id, result: 'retried' },
+      { id, result: 'delivered' },
+    ])
+    expect(await relay.flush()).toEqual({ delivered: 0, retried: 0, parked: 0, drained: true })
+  })
+
+  it('flush stops early when forwarding is paused or the deadline passes', async () => {
+    const { relay, ec } = makeRelay()
+    await relay.ingest('payabli-settlements', req(settlement))
+    await relay.control.setKillswitch('pause')
+    expect(await relay.flush()).toMatchObject({ delivered: 0, drained: false, reason: 'paused' })
+    await relay.control.setKillswitch('none')
+
+    ec.fail(1000) // End Close stays down for the whole window
+    const t = Date.now()
+    const out = await relay.flush({ timeoutMs: 100 })
+    expect(out).toMatchObject({ delivered: 0, drained: false, reason: 'timeout' })
+    expect(out.retried).toBeGreaterThan(0)
+    expect(Date.now() - t).toBeLessThan(5_000)
   })
 
   it('exposes preview and audited payload reads without sending anything', async () => {

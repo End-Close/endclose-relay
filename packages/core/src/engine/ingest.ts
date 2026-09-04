@@ -44,6 +44,8 @@ export interface IngestResult {
   status: 200 | 400 | 401 | 404 | 413 | 500 | 503
   body: { status: string } | { error: string }
   outcome: IngestResultOutcome
+  /** Store id of the buffered event; present for `accepted` and `filtered`. Correlate with the `settled` hook. */
+  id?: string
 }
 
 export function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
@@ -173,5 +175,6 @@ export async function ingestWebhook(
     status: 200,
     body: { status: filtered ? 'filtered' : 'accepted' },
     outcome: filtered ? 'filtered' : 'accepted',
+    id: inserted.id,
   }
 }

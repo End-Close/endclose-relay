@@ -1,7 +1,14 @@
 // @endclose/relay — the embeddable store-and-forward engine behind the End Close relay.
 
 export { createRelay, parseRoutes, DEFAULT_DISPATCH, DEFAULT_RETENTION } from './engine/relay.js'
-export type { Relay, RelayOptions, DispatchSettings, RetentionSettings, DispatchOnceResult } from './engine/relay.js'
+export type {
+  Relay,
+  RelayOptions,
+  DispatchSettings,
+  RetentionSettings,
+  DispatchOnceResult,
+  FlushResult,
+} from './engine/relay.js'
 export { ingestWebhook, eventTypeMatches, eventIdempotencyKey } from './engine/ingest.js'
 export type { IngestDeps, IngestResult, IngestResultOutcome } from './engine/ingest.js'
 export { Dispatcher } from './forward/dispatcher.js'

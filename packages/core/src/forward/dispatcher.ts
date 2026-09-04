@@ -206,8 +206,10 @@ export class Dispatcher {
         mapped.push(event)
       } catch (err) {
         if (err instanceof MappingError) {
-          await this.deps.store.markParked([event.id], `mapping failed: ${err.message}`)
+          const reason = `mapping failed: ${err.message}`
+          await this.deps.store.markParked([event.id], reason)
           this.hooks.emit('forward', { routeId, result: 'parked', count: 1 })
+          this.hooks.emit('settled', { id: event.id, routeId, result: 'parked', error: reason })
           this.log.warn('event parked: mapping failed', {
             route: routeId,
             event_id: event.event_id,
@@ -233,8 +235,10 @@ export class Dispatcher {
     } catch (err) {
       const ids = mapped.map((e) => e.id)
       if (err instanceof PermanentHttpError && (err.status === 400 || err.status === 422)) {
-        await this.deps.store.markParked(ids, `${err.message}: ${err.body}`)
+        const reason = `${err.message}: ${err.body}`
+        await this.deps.store.markParked(ids, reason)
         this.hooks.emit('forward', { routeId, result: 'parked', count: ids.length })
+        for (const id of ids) this.hooks.emit('settled', { id, routeId, result: 'parked', error: reason })
         this.log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
         this.hooks.emit('batch.parked', { routeId, status: err.status, events: ids.length })
       } else {
@@ -248,6 +252,9 @@ export class Dispatcher {
         )
         await this.deps.store.markFailed(ids, next, (err as Error).message)
         this.hooks.emit('forward', { routeId, result: 'retried', count: ids.length })
+        for (const id of ids) {
+          this.hooks.emit('settled', { id, routeId, result: 'retried', error: (err as Error).message })
+        }
         this.log.warn('batch delivery failed, will retry', {
           route: routeId,
           events: ids.length,
@@ -302,9 +309,10 @@ export class Dispatcher {
         const key = extResultKey(event, index)
         ;(failed.has(key.externalId) || failed.has(key.index) ? parked : ok).push(event)
       })
+      const reason = 'rejected by End Close bulk processing'
       await this.deps.store.markParked(
         parked.map((e) => e.id),
-        'rejected by End Close bulk processing',
+        reason,
       )
       await this.deps.store.markDelivered(
         ok.map((e) => e.id),
@@ -312,7 +320,10 @@ export class Dispatcher {
         bulkRequestId,
       )
       this.recordDelivered(ok, deliveredAt)
-      for (const e of parked) this.hooks.emit('forward', { routeId: e.route_id, result: 'parked', count: 1 })
+      for (const e of parked) {
+        this.hooks.emit('forward', { routeId: e.route_id, result: 'parked', count: 1 })
+        this.hooks.emit('settled', { id: e.id, routeId: e.route_id, result: 'parked', error: reason })
+      }
       return
     }
     await this.deps.store.markDelivered(
@@ -327,6 +338,7 @@ export class Dispatcher {
     for (const e of events) {
       this.hooks.emit('forward', { routeId: e.route_id, result: 'delivered', count: 1 })
       this.hooks.emit('delivered', { routeId: e.route_id, receivedAt: e.received_at, deliveredAt })
+      this.hooks.emit('settled', { id: e.id, routeId: e.route_id, result: 'delivered' })
     }
   }
 

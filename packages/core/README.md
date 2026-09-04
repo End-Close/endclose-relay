@@ -54,7 +54,30 @@ process.on('SIGTERM', () => relay.stop().then(() => process.exit(0)))
 
 // 2b. Serverless / cron: run one cycle per invocation instead.
 //     await relay.dispatchOnce({ prune: true })
+// 2c. Deliver before this process exits (shutdown, a serverless function):
+//     const out = await relay.flush({ timeoutMs: 5_000 })   // { delivered, retried, parked, drained, reason? }
 ```
+
+## Knowing what happened to an event
+
+`ingest()` resolves as soon as the event is durably in the store; a 2xx means **buffered**,
+never **sent**. The accepted result carries the store `id`. From there:
+
+- `dispatchOnce()` runs exactly one cycle (at most `batchMax` per route) and returns counts.
+  Use it from a scheduler; overlapping runs are safe because claims are leased.
+- `flush()` loops cycles until nothing deliverable remains or the deadline passes, retrying
+  as backoff timers expire. It returns immediately with `reason: 'paused'` if forwarding is
+  paused, and `reason: 'timeout'` with `retried > 0` if End Close stayed down. Flushing
+  cannot make an unavailable End Close accept records: with `memoryStore()` those events
+  are lost when the process exits, with a durable store the next cycle picks them up.
+- `relay.on('settled', e => …)` fires per event with `{ id, routeId, result, error? }` where
+  `result` is `delivered`, `retried` or `parked` — correlate with the `id` from `ingest()`.
+- `relay.store.getById(id)` (stores with the admin capability) gives the current `status`,
+  `attempts`, `next_attempt_at` and `last_error`.
+
+**Serverless recipe:** a durable store shared across invocations, `dispatchOnce()` on a
+schedule as the guarantee, and optionally `await relay.flush()` after `ingest()` for low
+latency when End Close is healthy.
 
 What your framework must do because the engine cannot:
 
@@ -78,8 +101,9 @@ share one store (a SQL store would use `FOR UPDATE SKIP LOCKED` in `claimDue`).
 
 ## Observability
 
-`relay.on(event, handler)` delivers metadata-only events: `ingest`, `stored`, `forward`,
-`delivered`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads are never included.
+`relay.on(event, handler)` delivers metadata-only events: `ingest`, `stored`, `settled`,
+`forward`, `delivered`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads are never
+included.
 The appliance drives its Prometheus metrics and call-home from these; the engine itself
 never phones home.
 

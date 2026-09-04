@@ -21,6 +21,8 @@ export interface RelayEvents {
   stored: { routeId: string; id: string; filtered: boolean }
   /** Per-event forwarding results. */
   forward: { routeId: string; result: ForwardResult; count: number }
+  /** Per-event outcome of a dispatch attempt, keyed by the store id `ingest` returned. */
+  settled: { id: string; routeId: string; result: ForwardResult; error?: string }
   /** One event confirmed delivered; carries the timestamps for lag measurement. */
   delivered: { routeId: string; receivedAt: string; deliveredAt: string }
   'batch.forwarded': { routeId: string; events: number; bulkRequestId: string }

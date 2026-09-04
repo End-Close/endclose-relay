@@ -90,6 +90,13 @@ export interface DispatchOnceResult {
   parked: number
 }
 
+export interface FlushResult extends DispatchOnceResult {
+  /** True when nothing deliverable remained when flush returned. */
+  drained: boolean
+  /** Why flush stopped early: the deadline passed, or forwarding is paused. */
+  reason?: 'timeout' | 'paused'
+}
+
 export interface Relay {
   /** Framework-agnostic webhook entrypoint. */
   ingest(routeId: string, req: RawRequest): Promise<IngestResult>
@@ -99,6 +106,12 @@ export interface Relay {
   stop(): Promise<void>
   /** Run one dispatch cycle (cron / serverless / tests). */
   dispatchOnce(opts?: { prune?: boolean }): Promise<DispatchOnceResult>
+  /**
+   * Run dispatch cycles until nothing deliverable remains or `timeoutMs` (default 30 s)
+   * passes, retrying as backoff timers expire. Returns immediately if forwarding is
+   * paused. Events still `retried` when it returns need a later cycle or a durable store.
+   */
+  flush(opts?: { timeoutMs?: number }): Promise<FlushResult>
   /** Run retention pruning to completion. */
   prune(): Promise<{ wiped: number; deleted: number }>
   /** Map a sample payload through a route without storing or sending anything. */
@@ -213,6 +226,45 @@ export function createRelay(opts: RelayOptions): Relay {
         off()
       }
       return result
+    },
+    async flush({ timeoutMs = 30_000 } = {}) {
+      const deadline = Date.now() + timeoutMs
+      const totals: FlushResult = { delivered: 0, retried: 0, parked: 0, drained: false }
+      // Events this flush has seen fail and not yet seen settle; the fallback backlog
+      // signal for stores without the admin capability.
+      const outstanding = new Set<string>()
+      const off = hooks.on('settled', (e) => {
+        if (e.result === 'retried') outstanding.add(e.id)
+        else outstanding.delete(e.id)
+      })
+      try {
+        for (;;) {
+          if ((await control.getKillswitch()) !== 'none') return { ...totals, reason: 'paused' }
+          const r = await this.dispatchOnce()
+          totals.delivered += r.delivered
+          totals.retried += r.retried
+          totals.parked += r.parked
+
+          const now = new Date().toISOString()
+          const dueRoutes = await store.routesWithDueEvents(now)
+          let backlog = outstanding.size > 0 || dueRoutes.length > 0
+          if (hasAdmin(store)) {
+            const counts = await store.countByStatus()
+            backlog = backlog || (counts['pending'] ?? 0) + (counts['retry'] ?? 0) > 0
+          }
+          if (!backlog) return { ...totals, drained: true }
+          // Due work that a cycle left untouched can only be on paused routes.
+          if (dueRoutes.length > 0 && r.delivered + r.retried + r.parked === 0) {
+            const paused = await Promise.all(dueRoutes.map((id) => control.isRoutePaused(id)))
+            if (paused.every(Boolean)) return { ...totals, reason: 'paused' }
+          }
+          const remaining = deadline - Date.now()
+          if (remaining <= 0) return { ...totals, reason: 'timeout' }
+          await new Promise((res) => setTimeout(res, Math.min(50, remaining)))
+        }
+      } finally {
+        off()
+      }
     },
     prune: () => dispatcher.pruneNow(),
     preview: (route, sample, receivedAt = new Date().toISOString()) =>
