@@ -1,9 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs'
-import type { Db } from '../db/db.js'
+import type { Db } from '@endclose/relay-sqlite'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { AuditRepo } from '../db/repo/audit.js'
 import { parseConfig, type LoadedConfig } from './load.js'
-import { envSecrets, requireSecret, type SecretResolver } from '../engine/secrets.js'
+import { envSecrets, hasAdapter, requireSecret, type SecretResolver } from '@endclose/relay'
 
 // The database is the source of truth for configuration: the latest config_versions row
 // IS the config. A relay.yaml file is only read once — to seed an empty database on
@@ -79,7 +79,10 @@ export function saveConfig(
   secrets: SecretResolver = envSecrets(),
 ): LoadedConfig {
   const loaded = parseConfig(yamlText)
-  for (const route of loaded.config.routes) requireSecret(secrets, route.auth.secret_env)
+  for (const route of loaded.config.routes) {
+    if (!hasAdapter(route.source)) throw new Error(`route ${route.id}: unknown source "${route.source}"`)
+    requireSecret(secrets, route.auth.secret_env)
+  }
 
   const routes = new RoutesRepo(db)
   const audit = new AuditRepo(db)

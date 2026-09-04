@@ -1,13 +1,10 @@
 import { statSync } from 'node:fs'
-import type { Db } from '../db/db.js'
-import { EventsRepo, type EventStatus } from '../db/repo/events.js'
+import { EventsRepo, KvRepo, type Db } from '@endclose/relay-sqlite'
+import type { EndCloseClient, EventStatus, RelayHooks } from '@endclose/relay'
 import { RoutesRepo } from '../db/repo/routes.js'
-import { KvRepo } from '../db/repo/kv.js'
 import { readActiveConfigRaw } from '../config/store.js'
 import { isDbPathPersistent } from '../db/persistence.js'
 import { log } from '../log.js'
-import type { EndCloseClient } from './endclose-client.js'
-import type { RelayHooks } from '../engine/hooks.js'
 
 export const TELEMETRY_ERROR_LIMIT = 20
 export const TELEMETRY_ERROR_WINDOW_MS = 60_000

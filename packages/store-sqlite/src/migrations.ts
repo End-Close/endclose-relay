@@ -1,7 +1,9 @@
 import type { Db } from './db.js'
 
 // Schema migrations, inlined so the package is bundler-friendly. Names are the keys in
-// schema_migrations, so they must never change once shipped.
+// schema_migrations, so they must never change once shipped. `001_init.sql` once created
+// the appliance's tables too; those now live in the appliance's own migration set, which
+// uses IF NOT EXISTS so both fresh and upgraded databases converge.
 
 export interface Migration {
   name: string
@@ -35,30 +37,6 @@ CREATE TABLE events (
 CREATE INDEX idx_events_dispatch ON events (status, next_attempt_at, route_id, id);
 CREATE INDEX idx_events_route_status ON events (route_id, status);
 
-CREATE TABLE routes (
-  id          TEXT PRIMARY KEY,
-  source      TEXT NOT NULL,
-  paused      INTEGER NOT NULL DEFAULT 0,
-  config_json TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
-);
-
-CREATE TABLE config_versions (
-  id          INTEGER PRIMARY KEY,
-  applied_at  TEXT NOT NULL,
-  config_hash TEXT NOT NULL,
-  config_yaml TEXT NOT NULL,
-  applied_by  TEXT NOT NULL
-);
-
-CREATE TABLE audit_log (
-  id          INTEGER PRIMARY KEY,
-  at          TEXT NOT NULL,
-  actor       TEXT NOT NULL,
-  action      TEXT NOT NULL,
-  detail_json TEXT NOT NULL
-);
-
 CREATE TABLE kv (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -72,16 +50,6 @@ CREATE TABLE kv (
     sql: `
 ALTER TABLE events ADD COLUMN claimed_by TEXT;
 ALTER TABLE events ADD COLUMN lease_until TEXT;
-`,
-  },
-  {
-    // Per-route pause moves from the appliance-owned routes table into kv, next to the
-    // global killswitch, so the store package never touches route definitions.
-    name: '003_route_pause_to_kv.sql',
-    sql: `
-INSERT INTO kv (key, value, updated_at)
-  SELECT 'route_paused.' || id, '1', updated_at FROM routes WHERE paused = 1
-  ON CONFLICT (key) DO NOTHING;
 `,
   },
 ]

@@ -1,0 +1,38 @@
+{
+  "name": "@endclose/relay-sqlite",
+  "version": "0.11.0",
+  "description": "SQLite EventStore and ControlStore for @endclose/relay (rollback journal + synchronous=FULL; safe on network filesystems).",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "peerDependencies": {
+    "@endclose/relay": "workspace:*"
+  },
+  "devDependencies": {
+    "@endclose/relay": "workspace:*",
+    "@endclose/relay-store-contract": "workspace:*",
+    "@types/better-sqlite3": "^7.6.12"
+  }
+}

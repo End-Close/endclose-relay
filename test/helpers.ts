@@ -1,20 +1,29 @@
 import { EventEmitter } from 'node:events'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openDb, type Db } from '../src/db/db.js'
+import {
+  EventsRepo,
+  KvRepo,
+  openDb,
+  SqliteControlStore,
+  SqliteEventStore,
+  type Db,
+} from '@endclose/relay-sqlite'
+import {
+  aesGcmCodec,
+  createRelay,
+  deriveKey,
+  envSecrets,
+  RelayHooks,
+  type DispatchSettings,
+  type Relay,
+} from '@endclose/relay'
 import { migrate } from '../src/db/migrate.js'
+import { DbRouteProvider } from '../src/db/route-provider.js'
 import { parseConfig } from '../src/config/load.js'
 import { saveConfig } from '../src/config/store.js'
-import { deriveKey } from '../src/crypto/keys.js'
 import { Metrics } from '../src/metrics/metrics.js'
-import { EventsRepo } from '../src/db/repo/events.js'
-import { KvRepo } from '../src/db/repo/kv.js'
-import { aesGcmCodec } from '../src/engine/codec.js'
-import { createRelay, type Relay, type DispatchSettings } from '../src/engine/relay.js'
-import { envSecrets } from '../src/engine/secrets.js'
 import { log } from '../src/log.js'
-import { RelayHooks } from '../src/engine/hooks.js'
-import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from '../src/db/sqlite-store.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 

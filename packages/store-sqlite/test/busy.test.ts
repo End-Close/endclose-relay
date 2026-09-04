@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSqliteBusy, withBusyRetry } from '../src/db/busy.js'
+import { isSqliteBusy, withBusyRetry } from '../src/busy.js'
 
 function busyErr(): Error & { code: string } {
   const err = new Error('database is locked') as Error & { code: string }

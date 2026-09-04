@@ -1,16 +1,7 @@
 import { pino } from 'pino'
+import type { Logger } from '@endclose/relay'
 
-// Log metadata is restricted to scalars: there is deliberately no way to pass an object
-// (and therefore a payload) into a log line.
-export type LogMeta = Record<string, string | number | boolean | null | undefined>
-
-/** The logging contract the engine depends on. Any host can supply its own implementation. */
-export interface Logger {
-  debug(msg: string, meta?: LogMeta): void
-  info(msg: string, meta?: LogMeta): void
-  warn(msg: string, meta?: LogMeta): void
-  error(msg: string, meta?: LogMeta): void
-}
+export type { Logger, LogMeta } from '@endclose/relay'
 
 const base = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -23,11 +14,4 @@ export const log: Logger = {
   warn: (msg, meta = {}) => base.warn(meta, msg),
   error: (msg, meta = {}) => base.error(meta, msg),
   debug: (msg, meta = {}) => base.debug(meta, msg),
-}
-
-export const noopLogger: Logger = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
 }

@@ -1,12 +1,12 @@
 import type { Db } from './db.js'
 import { EventsRepo, type EventRow } from './repo/events.js'
 import { KvRepo } from './repo/kv.js'
-import { RoutesRepo } from './repo/routes.js'
 import { BUSY_RETRY_ATTEMPTS, INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from './busy.js'
-import { log, type Logger } from '../log.js'
 import {
+  noopLogger,
   StoreUnavailableError,
   type ControlStore,
+  type Logger,
   type EventRecord,
   type EventStatus,
   type EventStore,
@@ -16,10 +16,8 @@ import {
   type Killswitch,
   type Lease,
   type NewEvent,
-  type RouteProvider,
   type RouteStats,
-} from '../engine/store.js'
-import type { RouteConfig } from '../config/schema.js'
+} from '@endclose/relay'
 
 // SQLite implementations of the engine's storage contracts. Lock contention (SQLITE_BUSY,
 // common on network filesystems such as EFS) is retried here and surfaced as
@@ -47,7 +45,7 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
 
   constructor(db: Db, opts: { logger?: Logger } = {}) {
     this.repo = new EventsRepo(db)
-    this.log = opts.logger ?? log
+    this.log = opts.logger ?? noopLogger
   }
 
   private async run<T>(op: string, fn: () => T, attempts = BUSY_RETRY_ATTEMPTS): Promise<T> {
@@ -145,16 +143,3 @@ export class SqliteControlStore implements ControlStore {
   }
 }
 
-/** Live route definitions from the appliance database: every config apply is visible immediately. */
-export class DbRouteProvider implements RouteProvider {
-  private routes: RoutesRepo
-  constructor(db: Db) {
-    this.routes = new RoutesRepo(db)
-  }
-  async get(id: string): Promise<RouteConfig | undefined> {
-    return this.routes.get(id)
-  }
-  async all(): Promise<RouteConfig[]> {
-    return this.routes.all()
-  }
-}

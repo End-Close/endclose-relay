@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { parse } from 'yaml'
-import { relayConfigSchema, type RelayConfig } from './schema.js'
+import { relayConfigSchema, type RelayConfig } from '@endclose/relay'
 
 export interface LoadedConfig {
   config: RelayConfig

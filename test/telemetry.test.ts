@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PermanentHttpError } from '../src/forward/endclose-client.js'
+import { PermanentHttpError } from '@endclose/relay'
 import {
   TELEMETRY_ERROR_LIMIT,
   Telemetry,

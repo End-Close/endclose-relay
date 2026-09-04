@@ -4,8 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildAdminServer } from '../src/admin/server.js'
 import { buildIngestServer } from '../src/ingest/server.js'
 import { buildMetricsServer } from '../src/metrics/server.js'
-import { EventsRepo } from '../src/db/repo/events.js'
-import { KvRepo } from '../src/db/repo/kv.js'
+import { EventsRepo, KvRepo } from '@endclose/relay-sqlite'
 import { DATA_KEY, FIXTURES, MASKING_KEY, TEST_CONFIG_YAML, setupDb, setupRelay } from './helpers.js'
 import type { Metrics } from '../src/metrics/metrics.js'
 
@@ -230,7 +229,7 @@ describe('config store resolution', () => {
   })
 
   it('empty DB with no seed file → bootstrap', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const { resolveActiveConfig } = await import('../src/config/store.js')
     const db = openDb(':memory:')
@@ -241,7 +240,7 @@ describe('config store resolution', () => {
   })
 
   it('a stored config that fails validation → invalid, never a throw (no crash loops)', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const { resolveActiveConfig } = await import('../src/config/store.js')
     const db = openDb(':memory:')
@@ -259,7 +258,7 @@ describe('config store resolution', () => {
 
 describe('recovery mode (stored config invalid)', () => {
   it('serves the raw document + error so the editor can repair it', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const db = openDb(':memory:')
     migrate(db)
@@ -297,7 +296,7 @@ describe('recovery mode (stored config invalid)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().restarting).toBe(true)
     expect(res.json().paused).toBe(true)
-    const { KvRepo } = await import('../src/db/repo/kv.js')
+    const { KvRepo } = await import('@endclose/relay-sqlite')
     expect(new KvRepo(db).globalKillswitch()).toBe('pause')
     const audit = (await admin.inject({ method: 'GET', url: '/audit', headers: AUTH })).json()
     expect(audit.find((a: any) => a.actor === 'recovery')?.action).toBe('killswitch.pause')
@@ -307,9 +306,9 @@ describe('recovery mode (stored config invalid)', () => {
   })
 
   it('a panic set before recovery is never loosened to pause', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
-    const { KvRepo } = await import('../src/db/repo/kv.js')
+    const { KvRepo } = await import('@endclose/relay-sqlite')
     const db = openDb(':memory:')
     migrate(db)
     new KvRepo(db).setGlobalKillswitch('panic')
@@ -339,7 +338,7 @@ describe('recovery mode (stored config invalid)', () => {
 
 describe('bootstrap mode', () => {
   it('serves the UI/status with mode=bootstrap, applies first config, fires callback once', async () => {
-    const { openDb } = await import('../src/db/db.js')
+    const { openDb } = await import('@endclose/relay-sqlite')
     const { migrate } = await import('../src/db/migrate.js')
     const db = openDb(':memory:')
     migrate(db)

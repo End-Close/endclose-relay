@@ -6,8 +6,9 @@ import { EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher } from '../forward/dispatcher.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
+import { hasAdapter } from '../ingest/adapters/registry.js'
 import type { Json } from '../mask/paths.js'
-import { noopLogger, type Logger } from '../log.js'
+import { noopLogger, type Logger } from '../logger.js'
 import { aesGcmCodec, plainCodec, type PayloadCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
@@ -131,6 +132,13 @@ export function parseRoutes(doc: unknown): RouteConfig[] {
 }
 
 export function createRelay(opts: RelayOptions): Relay {
+  if (Array.isArray(opts.routes)) {
+    for (const r of opts.routes) {
+      if (!hasAdapter(r.source, opts.adapters)) {
+        throw new Error(`route ${r.id}: no adapter for source "${r.source}"`)
+      }
+    }
+  }
   const routes = Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes
   const control = opts.control ?? new MemoryControlStore()
   const secrets = toSecretResolver(opts.secrets)

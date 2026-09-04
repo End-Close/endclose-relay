@@ -1,10 +1,9 @@
 import type { EventEmitter } from 'node:events'
-import type { RuntimeSettings } from '../config/runtime.js'
 import type { ControlStore, EventRecord as EventRow, EventStore, RouteProvider } from '../engine/store.js'
 import type { PayloadCodec } from '../engine/codec.js'
 import type { Json } from '../mask/paths.js'
 import { RelayHooks } from '../engine/hooks.js'
-import { log, type Logger } from '../log.js'
+import { noopLogger, type Logger } from '../logger.js'
 import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { nextAttemptAt } from './backoff.js'
 import { mapEvent, MappingError, type EndCloseRecord } from './mapper.js'
@@ -22,15 +21,24 @@ const PRUNE_INTERVAL_MS = 3600_000
 const PRUNE_BATCH = 50
 const PRUNE_YIELD_MS = 25
 
+export interface DispatcherSettings {
+  dispatch: {
+    batch_max: number
+    poll_interval_ms: number
+    backoff_base_ms: number
+    backoff_cap_ms: number
+    park_after_ms: number
+    lease_ms: number
+  }
+  /** null disables retention pruning. */
+  retention: { delivered_days: number; ledger_days: number } | null
+}
+
 export interface DispatcherDeps {
   store: EventStore
   control: ControlStore
   routes: RouteProvider
-  settings: {
-    dispatch: RuntimeSettings['dispatch']
-    /** null disables retention pruning. */
-    retention: RuntimeSettings['retention'] | null
-  }
+  settings: DispatcherSettings
   client: EndCloseClient
   codec: PayloadCodec
   maskingKey: Buffer
@@ -55,7 +63,7 @@ export class Dispatcher {
   private pruneTimer: NodeJS.Timeout | undefined
 
   constructor(private deps: DispatcherDeps) {
-    this.log = deps.logger ?? log
+    this.log = deps.logger ?? noopLogger
     this.hooks = deps.hooks ?? new RelayHooks()
   }
 

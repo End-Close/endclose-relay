@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { mapEvent } from '../src/forward/mapper.js'
-import { REDACTED, hardDenyValue, keyNameIsSensitive } from '../src/mask/defaults.js'
-import { routeSchema } from '../src/config/schema.js'
+import { mapEvent } from '../src/index.js'
+import { REDACTED, hardDenyValue, keyNameIsSensitive } from '../src/index.js'
+import { routeSchema } from '../src/index.js'
 import { MASKING_KEY } from './helpers.js'
 
 // The map IS the allowlist: these tests pin the security properties of the mapping —

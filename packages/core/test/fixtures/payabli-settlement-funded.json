@@ -1,0 +1,15 @@
+{
+  "Event": "TransferFunded",
+  "Paypoint": "Acme Field Services",
+  "Text": "Transfer for batch 87 has been funded.",
+  "transferId": "trf_9f8e7d6c",
+  "NetAmount": "3,762.87",
+  "TotalAmount": "3,800.00",
+  "RtAmount": "0.00",
+  "transferTime": "7/3/2026 14:22:05",
+  "batchId": "87",
+  "ContactUs": "Contact us at support@payabli.com",
+  "batchNumber": "b2f6a3e0-4c1d-4e8a-9b7f-1a2b3c4d5e6f",
+  "entryPoint": "acme-main",
+  "ExternalPaypointId": null
+}

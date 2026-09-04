@@ -1,6 +1,6 @@
 import type { Db } from '../db.js'
 
-import type { EventStatus, RouteStats } from '../../engine/store.js'
+import type { EventStatus, RouteStats } from '@endclose/relay'
 
 export type { EventStatus, RouteStats }
 

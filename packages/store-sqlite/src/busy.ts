@@ -1,4 +1,4 @@
-import { log, type Logger } from '../log.js'
+import { noopLogger, type Logger } from '@endclose/relay'
 
 export const SQLITE_BUSY_TIMEOUT_MS = 15_000
 export const BUSY_RETRY_ATTEMPTS = 3
@@ -25,7 +25,7 @@ export async function withBusyRetry<T>(
 ): Promise<T> {
   const attempts = opts.attempts ?? BUSY_RETRY_ATTEMPTS
   const delayMs = opts.delayMs ?? DEFAULT_DELAY_MS
-  const logger = opts.logger ?? log
+  const logger = opts.logger ?? noopLogger
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {

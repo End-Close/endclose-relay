@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { mapEvent, parseDate, toCents, MappingError } from '../src/forward/mapper.js'
+import { mapEvent, parseDate, toCents, MappingError } from '../src/index.js'
 import { FIXTURES, MASKING_KEY, testConfig } from './helpers.js'
-import type { Json } from '../src/mask/paths.js'
+import type { Json } from '../src/index.js'
 
 const settlement = JSON.parse(
   readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'), 'utf8'),

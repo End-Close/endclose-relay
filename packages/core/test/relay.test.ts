@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
-import { createRelay, parseRoutes } from '../src/engine/relay.js'
-import { memoryStore } from '../src/engine/memory-store.js'
+import { createRelay, parseRoutes } from '../src/index.js'
+import { memoryStore } from '../src/index.js'
 import { FIXTURES, TEST_CONFIG_YAML } from './helpers.js'
 
 // The SDK path end to end: no HTTP server, no SQLite, no process environment. A host
@@ -126,5 +126,39 @@ describe('createRelay (embedded engine)', () => {
     const [row] = await store.list({})
     expect((await store.getById(row!.id))?.payload.equals(settlement)).toBe(true)
     expect((await store.getById(row!.id))?.payload_iv).toBeNull()
+  })
+})
+
+describe('route schema policy', () => {
+  it('accepts auth.secret as an alias of auth.secret_env', async () => {
+    const { routeSchema } = await import('../src/index.js')
+    const r = routeSchema.parse({
+      id: 'x',
+      source: 'payabli',
+      auth: { mode: 'static_header', secret: 'MY_SECRET' },
+      map: { data_stream_key: 'k', external_id: 'a', amount: 'b', direction: 'credit' },
+    })
+    expect(r.auth.secret_env).toBe('MY_SECRET')
+    expect((r.auth as Record<string, unknown>)['secret']).toBeUndefined()
+  })
+
+  it('rejects static routes whose source has no adapter, and accepts host-registered ones', async () => {
+    const { createRelay, memoryStore, payabliAdapter } = await import('../src/index.js')
+    const base = {
+      store: memoryStore(),
+      secrets: {},
+      endclose: { apiKey: 'k' },
+      encryption: 'none' as const,
+      maskingKey: 'test-masking-key-0123456789',
+    }
+    const route = {
+      id: 'x',
+      source: 'acme',
+      auth: { mode: 'static_header' as const, header: 'authorization', secret_env: 'S', allowed_ips: [] },
+      map: { data_stream_key: 'k', external_id: 'a', amount: 'b', direction: 'credit' as const, metadata: {} },
+      max_body_bytes: 1024,
+    }
+    expect(() => createRelay({ ...base, routes: [route] })).toThrow(/no adapter for source "acme"/)
+    expect(() => createRelay({ ...base, routes: [route], adapters: { acme: { ...payabliAdapter, name: 'acme' } } })).not.toThrow()
   })
 })

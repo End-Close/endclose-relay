@@ -1,6 +1,5 @@
 import { Counter, Gauge, Histogram, Registry } from 'prom-client'
-import type { GlobalKillswitch } from '../db/repo/kv.js'
-import type { ForwardResult, IngestOutcome, RelayHooks } from '../engine/hooks.js'
+import type { ForwardResult, IngestOutcome, Killswitch as GlobalKillswitch, RelayHooks } from '@endclose/relay'
 
 export type IngestResult = IngestOutcome
 export type { ForwardResult }

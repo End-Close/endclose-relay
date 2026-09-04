@@ -41,12 +41,15 @@ const dateRefSchema = z.union([
 ])
 export type DateRef = z.infer<typeof dateRefSchema>
 
+// A secret reference: the NAME the host's SecretResolver resolves (an env var in the
+// appliance). The value itself never appears in config or the database. `secret` is
+// accepted as an alias and normalised to `secret_env` (see normalizeAuth).
+const secretRef = z.string().min(1)
+
 export const payabliAuthSchema = z.object({
   mode: z.literal('static_header'),
   header: z.string().default('authorization'),
-  // Name of the env var holding the expected header value. The value itself never
-  // appears in config or the database.
-  secret_env: z.string(),
+  secret_env: secretRef,
   allowed_ips: z.array(z.string()).default([]),
 })
 
@@ -54,7 +57,7 @@ export const genericHmacAuthSchema = z.object({
   mode: z.literal('hmac'),
   header: z.string(),
   algorithm: z.enum(['sha256', 'sha512']).default('sha256'),
-  secret_env: z.string(),
+  secret_env: secretRef,
   // What gets signed: '{body}' or '{timestamp}.{body}'
   signed_content: z.enum(['body', 'timestamp.body']).default('body'),
   timestamp_header: z.string().optional(),
@@ -99,11 +102,26 @@ export const recordMapSchema = z
     }
   })
 
-export const routeSchema = z.object({
+/** Accept `auth.secret` as an alias of `auth.secret_env`. */
+function normalizeAuth(v: unknown): unknown {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return v
+  const auth = (v as { auth?: unknown }).auth
+  if (auth === null || typeof auth !== 'object' || Array.isArray(auth)) return v
+  const a = auth as Record<string, unknown>
+  if (typeof a['secret'] !== 'string' || a['secret_env'] !== undefined) return v
+  const { secret, ...rest } = a
+  return { ...(v as object), auth: { ...rest, secret_env: secret } }
+}
+
+/** Built-in processor adapters. Hosts may register more via createRelay({ adapters }). */
+export const BUILTIN_SOURCES = ['payabli', 'generic_hmac'] as const
+
+export const routeObjectSchema = z.object({
   id: z
     .string()
     .regex(/^[a-z0-9][a-z0-9-_]*$/, 'route id must be a lowercase slug'),
-  source: z.enum(['payabli', 'generic_hmac']),
+  // The processor adapter name: a built-in, or one registered by the host.
+  source: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/, 'source must be a lowercase slug'),
   auth: z.discriminatedUnion('mode', [payabliAuthSchema, genericHmacAuthSchema]),
   // Payload event types accepted by this route (adapter-extracted; glob '*' allowed).
   // Non-matching events persist locally as dropped_by_filter and are never forwarded.
@@ -117,6 +135,8 @@ export const routeSchema = z.object({
     .default(1024 * 1024),
 })
 
+export const routeSchema = z.preprocess(normalizeAuth, routeObjectSchema)
+
 // The config document is ROUTES ONLY (strict: unknown top-level keys are rejected).
 // Everything else (End Close endpoint, ports, dispatch/retention tuning) is a boot-time
 // runtime setting from the environment — see src/config/runtime.ts. Consequence: every
@@ -128,7 +148,7 @@ export const relayConfigSchema = z
   .strict()
 
 export type RelayConfig = z.infer<typeof relayConfigSchema>
-export type RouteConfig = z.infer<typeof routeSchema>
+export type RouteConfig = z.infer<typeof routeObjectSchema>
 export type RecordMap = z.infer<typeof recordMapSchema>
 export type PayabliAuth = z.infer<typeof payabliAuthSchema>
 export type GenericHmacAuth = z.infer<typeof genericHmacAuthSchema>

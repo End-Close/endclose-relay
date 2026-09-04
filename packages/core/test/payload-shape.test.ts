@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { jsonTopLevelKeys, requestHeaderNames } from '../src/util/payload-shape.js'
+import { jsonTopLevelKeys, requestHeaderNames } from '../src/index.js'
 
 describe('payload-shape helpers', () => {
   it('lists sorted top-level keys without values', () => {

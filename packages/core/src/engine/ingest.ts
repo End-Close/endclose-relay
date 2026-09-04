@@ -6,7 +6,7 @@ import { adapterFor } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
 import { RelayHooks, type IngestOutcome } from './hooks.js'
-import { noopLogger, type Logger } from '../log.js'
+import { noopLogger, type Logger } from '../logger.js'
 import type { SecretResolver } from './secrets.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 
@@ -95,7 +95,7 @@ export async function ingestWebhook(
     return { status: 413, body: { error: 'body too large' }, outcome: 'rejected_size' }
   }
 
-  const adapter = deps.adapters?.[route.source] ?? adapterFor(route.source)
+  const adapter = adapterFor(route.source, deps.adapters)
   const secret = secrets.resolve(route.auth.secret_env)
   if (secret === undefined) {
     logger.error('ingest secret unavailable', { route: routeId, secret_env: route.auth.secret_env })

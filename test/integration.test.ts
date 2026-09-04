@@ -4,9 +4,8 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildIngestServer } from '../src/ingest/server.js'
-import type { Relay } from '../src/engine/relay.js'
-import { EventsRepo } from '../src/db/repo/events.js'
-import { KvRepo } from '../src/db/repo/kv.js'
+import type { Relay } from '@endclose/relay'
+import { EventsRepo, KvRepo } from '@endclose/relay-sqlite'
 import { FIXTURES, setupDb, setupRelay } from './helpers.js'
 
 const settlementBody = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))

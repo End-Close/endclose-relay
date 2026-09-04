@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
-import type { EventStore, EventStoreAdmin, NewEvent } from '../src/engine/store.js'
+import type { EventStore, EventStoreAdmin, NewEvent } from '@endclose/relay'
 
 // The behavioural contract every EventStore implementation must satisfy. Run it against
 // each store: `describeEventStoreContract('sqlite', () => new SqliteEventStore(db))`.

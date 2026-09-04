@@ -1,14 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describeEventStoreContract } from './store-contract.js'
-import { MemoryEventStore } from '../src/engine/memory-store.js'
-import { SqliteEventStore } from '../src/db/sqlite-store.js'
-import { openDb, type Db } from '../src/db/db.js'
-import { migrate } from '../src/db/migrate.js'
-import { noopLogger } from '../src/log.js'
-
-describeEventStoreContract('memory', () => new MemoryEventStore())
+import { describeEventStoreContract } from '@endclose/relay-store-contract'
+import { noopLogger } from '@endclose/relay'
+import { SqliteEventStore } from '../src/store.js'
+import { openDb, type Db } from '../src/db.js'
+import { migrate } from '../src/migrations.js'
 
 const dbs = new Map<SqliteEventStore, Db>()
 describeEventStoreContract(

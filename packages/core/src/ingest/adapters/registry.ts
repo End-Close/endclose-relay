@@ -7,8 +7,15 @@ const adapters: Record<string, ProcessorAdapter> = {
   generic_hmac: genericHmacAdapter,
 }
 
-export function adapterFor(source: string): ProcessorAdapter {
-  const adapter = adapters[source]
+export function adapterFor(
+  source: string,
+  extra?: Record<string, ProcessorAdapter>,
+): ProcessorAdapter {
+  const adapter = extra?.[source] ?? adapters[source]
   if (!adapter) throw new Error(`no adapter for source: ${source}`)
   return adapter
+}
+
+export function hasAdapter(source: string, extra?: Record<string, ProcessorAdapter>): boolean {
+  return Boolean(extra?.[source] ?? adapters[source])
 }
