@@ -5,6 +5,7 @@ import type { RelayHooks } from '../engine/hooks.js'
 import { log, type Logger } from '../log.js'
 import { envSecrets, type SecretResolver } from '../engine/secrets.js'
 import { ingestWebhook } from '../engine/ingest.js'
+import type { PayloadCodec } from '../engine/codec.js'
 
 // The appliance's webhook listener: a thin Fastify shell around the engine's ingest path.
 
@@ -12,7 +13,7 @@ export interface IngestDeps {
   store: EventStore
   control: ControlStore
   routes: RouteProvider
-  dataKey: Buffer
+  codec: PayloadCodec
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal: EventEmitter
   hooks?: RelayHooks

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { EventEmitter } from 'node:events'
 import { StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from './store.js'
-import { encrypt } from '../crypto/at-rest.js'
+import type { PayloadCodec } from './codec.js'
 import { adapterFor } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
@@ -22,8 +22,8 @@ export interface IngestDeps {
   control: ControlStore
   routes: RouteProvider
   secrets: SecretResolver
-  /** Encrypts buffered payloads at rest. */
-  dataKey: Buffer
+  /** How buffered payloads are stored (encrypted or plain). */
+  codec: PayloadCodec
   /** Emits 'event' whenever a new deliverable event lands, so the dispatcher wakes immediately. */
   signal?: EventEmitter
   hooks?: RelayHooks
@@ -68,7 +68,7 @@ export async function ingestWebhook(
   routeId: string,
   raw: RawRequest,
 ): Promise<IngestResult> {
-  const { store, control, routes, secrets, dataKey, signal } = deps
+  const { store, control, routes, secrets, codec, signal } = deps
   const hooks = deps.hooks ?? new RelayHooks()
   const logger = deps.logger ?? noopLogger
 
@@ -129,7 +129,7 @@ export async function ingestWebhook(
     payload_keys: jsonTopLevelKeys(body),
   })
 
-  const { ciphertext, iv } = encrypt(dataKey, rawBody)
+  const { payload, iv } = codec.encode(rawBody)
   const headersJson = JSON.stringify(
     Object.fromEntries(
       PERSISTED_HEADERS.map((h) => [h, raw.headers[h]]).filter(([, v]) => v !== undefined),
@@ -143,7 +143,7 @@ export async function ingestWebhook(
       source: route.source,
       event_id: eventId,
       event_type: eventType,
-      payload_enc: ciphertext,
+      payload,
       payload_iv: iv,
       headers_json: headersJson,
       received_at: new Date().toISOString(),

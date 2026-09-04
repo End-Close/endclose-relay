@@ -127,7 +127,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
         global: kv.globalKillswitch(),
         routes_paused: routes
           .all()
-          .filter((r) => routes.isPaused(r.id))
+          .filter((r) => kv.isRoutePaused(r.id))
           .map((r) => r.id),
       },
       queue: events.countByStatus(),
@@ -137,7 +137,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
           id: r.id,
           source: r.source,
           data_stream_key: r.map.data_stream_key,
-          paused: routes.isPaused(r.id),
+          paused: kv.isRoutePaused(r.id),
           counts: s?.counts ?? {},
           last_delivered_at: s?.last_delivered_at ?? null,
           oldest_pending_age_s: s?.oldest_pending_at
@@ -167,7 +167,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
     const { paused } = (request.body ?? {}) as { paused?: boolean }
     if (!routes.get(id)) return reply.code(404).send({ error: 'unknown route' })
     if (typeof paused !== 'boolean') return reply.code(400).send({ error: 'paused must be boolean' })
-    routes.setPaused(id, paused)
+    kv.setRoutePaused(id, paused)
     audit.log(ACTOR, paused ? 'route.pause' : 'route.resume', { route: id })
     return { route: id, paused }
   })

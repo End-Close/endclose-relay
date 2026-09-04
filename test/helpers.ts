@@ -9,6 +9,7 @@ import { deriveKey } from '../src/crypto/keys.js'
 import { Metrics } from '../src/metrics/metrics.js'
 import { EventsRepo } from '../src/db/repo/events.js'
 import { KvRepo } from '../src/db/repo/kv.js'
+import { aesGcmCodec } from '../src/engine/codec.js'
 import { RelayHooks } from '../src/engine/hooks.js'
 import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from '../src/db/sqlite-store.js'
 
@@ -16,6 +17,7 @@ export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures'
 
 export const DATA_KEY = deriveKey('RELAY_DATA_KEY', 'test-data-key-0123456789')
 export const MASKING_KEY = deriveKey('MASKING_HMAC_KEY', 'test-masking-key-0123456789')
+export const CODEC = aesGcmCodec(DATA_KEY)
 
 export const TEST_CONFIG_YAML = `
 routes:
@@ -105,6 +107,7 @@ export function testSettings() {
       backoff_base_ms: 20,
       backoff_cap_ms: 200,
       park_after_ms: 7 * 24 * 3600 * 1000,
+      lease_ms: 600_000,
     },
     retention: { delivered_days: 7, ledger_days: 30 },
   }

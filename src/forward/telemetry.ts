@@ -189,7 +189,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
       return {
         id: r.id,
         source: r.source,
-        paused: routes.isPaused(r.id),
+        paused: kv.isRoutePaused(r.id),
         counts: s?.counts ?? {},
         last_delivered_at: s?.last_delivered_at ?? null,
         oldest_pending_at: s?.oldest_pending_at ?? null,

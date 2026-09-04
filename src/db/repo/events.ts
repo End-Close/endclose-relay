@@ -1,16 +1,48 @@
 import type { Db } from '../db.js'
 
-import type {
-  EventRecord,
-  EventStatus,
-  EventSummary,
-  NewEvent,
-  RouteStats,
-} from '../../engine/store.js'
+import type { EventStatus, RouteStats } from '../../engine/store.js'
 
-export type { EventStatus, RouteStats, EventSummary }
-export type EventRow = EventRecord
-export type InsertEvent = NewEvent
+export type { EventStatus, RouteStats }
+
+/** A raw row of the events table. */
+export interface EventRow {
+  id: number
+  route_id: string
+  source: string
+  event_id: string
+  event_type: string | null
+  payload_enc: Buffer
+  payload_iv: Buffer
+  headers_json: string
+  received_at: string
+  status: EventStatus
+  attempts: number
+  next_attempt_at: string | null
+  delivered_at: string | null
+  bulk_request_id: string | null
+  last_error: string | null
+  idempotency_key: string
+  claimed_by: string | null
+  lease_until: string | null
+}
+
+export interface InsertEvent {
+  route_id: string
+  source: string
+  event_id: string
+  event_type: string | null
+  payload_enc: Buffer
+  payload_iv: Buffer
+  headers_json: string
+  received_at: string
+  status: EventStatus
+  idempotency_key: string
+}
+
+export type EventSummary = Omit<
+  EventRow,
+  'payload_enc' | 'payload_iv' | 'headers_json' | 'idempotency_key' | 'claimed_by' | 'lease_until'
+>
 
 export class EventsRepo {
   constructor(private db: Db) {}
@@ -31,8 +63,8 @@ export class EventsRepo {
     return res.changes === 0 ? null : Number(res.lastInsertRowid)
   }
 
-  /** Claim due events for a route, oldest first, and mark them 'delivering'. */
-  claimDue(routeId: string, now: string, limit: number): EventRow[] {
+  /** Claim due events for a route, oldest first, mark them 'delivering' and lease them. */
+  claimDue(routeId: string, now: string, limit: number, owner: string, leaseUntil: string): EventRow[] {
     const claim = this.db.transaction(() => {
       const rows = this.db
         .prepare(
@@ -45,9 +77,16 @@ export class EventsRepo {
         const ids = rows.map((r) => r.id)
         this.db
           .prepare(
-            `UPDATE events SET status = 'delivering', next_attempt_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
+            `UPDATE events SET status = 'delivering', next_attempt_at = ?, claimed_by = ?, lease_until = ?
+             WHERE id IN (${ids.map(() => '?').join(',')})`,
           )
-          .run(now, ...ids)
+          .run(now, owner, leaseUntil, ...ids)
+        for (const r of rows) {
+          r.status = 'delivering'
+          r.next_attempt_at = now
+          r.claimed_by = owner
+          r.lease_until = leaseUntil
+        }
       }
       return rows
     })
@@ -58,7 +97,8 @@ export class EventsRepo {
     if (ids.length === 0) return
     this.db
       .prepare(
-        `UPDATE events SET status = 'delivered', delivered_at = ?, bulk_request_id = ?, last_error = NULL
+        `UPDATE events SET status = 'delivered', delivered_at = ?, bulk_request_id = ?, last_error = NULL,
+           claimed_by = NULL, lease_until = NULL
          WHERE id IN (${ids.map(() => '?').join(',')})`,
       )
       .run(deliveredAt, bulkRequestId, ...ids)
@@ -69,7 +109,7 @@ export class EventsRepo {
     this.db
       .prepare(
         `UPDATE events SET status = 'retry', attempts = attempts + 1,
-           next_attempt_at = ?, last_error = ?
+           next_attempt_at = ?, last_error = ?, claimed_by = NULL, lease_until = NULL
          WHERE id IN (${ids.map(() => '?').join(',')})`,
       )
       .run(nextAttemptAt, error.slice(0, 500), ...ids)
@@ -79,16 +119,24 @@ export class EventsRepo {
     if (ids.length === 0) return
     this.db
       .prepare(
-        `UPDATE events SET status = 'parked', last_error = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
+        `UPDATE events SET status = 'parked', last_error = ?, claimed_by = NULL, lease_until = NULL
+         WHERE id IN (${ids.map(() => '?').join(',')})`,
       )
       .run(error.slice(0, 500), ...ids)
   }
 
-  /** Events stuck in 'delivering' after a crash are returned to 'retry' at boot. */
-  recoverDelivering(now: string): number {
+  /**
+   * Rows stuck in 'delivering' whose lease expired (or that belong to `owner`, or that
+   * predate leases) go back to 'retry'.
+   */
+  recoverDelivering(now: string, owner = ''): number {
     return this.db
-      .prepare(`UPDATE events SET status = 'retry', next_attempt_at = ? WHERE status = 'delivering'`)
-      .run(now).changes
+      .prepare(
+        `UPDATE events SET status = 'retry', next_attempt_at = ?, claimed_by = NULL, lease_until = NULL
+         WHERE status = 'delivering'
+           AND (lease_until IS NULL OR lease_until < ? OR claimed_by = ?)`,
+      )
+      .run(now, now, owner).changes
   }
 
   /**
@@ -101,7 +149,7 @@ export class EventsRepo {
     return this.db
       .prepare(
         `UPDATE events SET status = 'retry', attempts = attempts + 1,
-           next_attempt_at = ?, last_error = ?
+           next_attempt_at = ?, last_error = ?, claimed_by = NULL, lease_until = NULL
          WHERE status = 'delivering' AND id IN (${ids.map(() => '?').join(',')})`,
       )
       .run(nextAttemptAt, error.slice(0, 500), ...ids).changes

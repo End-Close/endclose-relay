@@ -15,6 +15,7 @@ export interface RuntimeSettings {
     backoff_base_ms: number
     backoff_cap_ms: number
     park_after_ms: number
+    lease_ms: number
   }
   retention: {
     delivered_days: number
@@ -55,6 +56,7 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       backoff_base_ms: int(env, 'RELAY_BACKOFF_BASE_MS', 1000),
       backoff_cap_ms: int(env, 'RELAY_BACKOFF_CAP_MS', 600_000),
       park_after_ms: int(env, 'RELAY_PARK_AFTER_MS', 7 * 24 * 3600 * 1000),
+      lease_ms: int(env, 'RELAY_LEASE_MS', 600_000),
     },
     retention: {
       delivered_days: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', 7),

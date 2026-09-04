@@ -18,7 +18,7 @@ export interface RelayEvents {
   /** Every ingest request that reached a known route, by outcome. */
   ingest: { routeId: string; outcome: IngestOutcome; eventType: string | null; bodyBytes: number }
   /** A new event row was persisted (not emitted for duplicates). */
-  stored: { routeId: string; id: number; filtered: boolean }
+  stored: { routeId: string; id: string; filtered: boolean }
   /** Per-event forwarding results. */
   forward: { routeId: string; result: ForwardResult; count: number }
   /** One event confirmed delivered; carries the timestamps for lag measurement. */

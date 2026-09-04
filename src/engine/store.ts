@@ -13,13 +13,15 @@ export type EventStatus =
   | 'dropped_by_filter'
 
 export interface EventRecord {
-  id: number
+  /** Opaque store-assigned id. */
+  id: string
   route_id: string
   source: string
   event_id: string
   event_type: string | null
-  payload_enc: Buffer
-  payload_iv: Buffer
+  /** Whatever the PayloadCodec produced; opaque to the store. */
+  payload: Buffer
+  payload_iv: Buffer | null
   headers_json: string
   received_at: string
   status: EventStatus
@@ -29,6 +31,8 @@ export interface EventRecord {
   bulk_request_id: string | null
   last_error: string | null
   idempotency_key: string
+  claimed_by: string | null
+  lease_until: string | null
 }
 
 export interface NewEvent {
@@ -36,8 +40,8 @@ export interface NewEvent {
   source: string
   event_id: string
   event_type: string | null
-  payload_enc: Buffer
-  payload_iv: Buffer
+  payload: Buffer
+  payload_iv: Buffer | null
   headers_json: string
   received_at: string
   status: EventStatus
@@ -51,9 +55,12 @@ export interface RouteStats {
   oldest_pending_at: string | null
 }
 
-export type EventSummary = Omit<EventRecord, 'payload_enc' | 'payload_iv' | 'headers_json' | 'idempotency_key'>
+export type EventSummary = Omit<
+  EventRecord,
+  'payload' | 'payload_iv' | 'headers_json' | 'idempotency_key' | 'claimed_by' | 'lease_until'
+>
 
-export type InsertResult = { duplicate: false; id: number } | { duplicate: true }
+export type InsertResult = { duplicate: false; id: string } | { duplicate: true }
 
 /**
  * Thrown by a store when it is temporarily unable to serve a request (lock contention,
@@ -76,17 +83,21 @@ export interface EventStore {
   insert(e: NewEvent): Promise<InsertResult>
   routesWithDueEvents(now: string): Promise<string[]>
   /**
-   * Atomically select up to `limit` due events for a route (oldest first) and mark them
-   * `delivering`. Concurrent callers must never receive overlapping rows.
+   * Atomically select up to `limit` due events for a route (oldest first), mark them
+   * `delivering` and record the lease. Concurrent callers must never receive overlapping
+   * rows (a SQL store would use SELECT ... FOR UPDATE SKIP LOCKED).
    */
-  claimDue(routeId: string, now: string, limit: number): Promise<EventRecord[]>
-  markDelivered(ids: number[], deliveredAt: string, bulkRequestId: string | null): Promise<void>
-  markFailed(ids: number[], nextAttemptAt: string, error: string): Promise<void>
-  markParked(ids: number[], error: string): Promise<void>
+  claimDue(routeId: string, now: string, limit: number, lease: Lease): Promise<EventRecord[]>
+  markDelivered(ids: string[], deliveredAt: string, bulkRequestId: string | null): Promise<void>
+  markFailed(ids: string[], nextAttemptAt: string, error: string): Promise<void>
+  markParked(ids: string[], error: string): Promise<void>
   /** Return the given rows to `retry` if (and only if) they are still `delivering`. */
-  releaseDelivering(ids: number[], nextAttemptAt: string, error: string): Promise<number>
-  /** Return rows stuck in `delivering` (e.g. after a crash) to `retry`. */
-  recoverDelivering(now: string): Promise<number>
+  releaseDelivering(ids: string[], nextAttemptAt: string, error: string): Promise<number>
+  /**
+   * Return `delivering` rows whose lease has expired — or that were claimed by `owner`,
+   * so a restarted instance reclaims its own work immediately — to `retry`.
+   */
+  recoverDelivering(now: string, owner?: string): Promise<number>
   /** Park events that have been retrying longer than `maxAgeMs`. */
   parkExpired(now: string, maxAgeMs: number): Promise<number>
   /** One bounded retention step; callers loop until it returns zeros. */
@@ -99,13 +110,18 @@ export interface EventStore {
   close?(): Promise<void>
 }
 
+export interface Lease {
+  owner: string
+  until: string
+}
+
 /** Optional inspection/replay capability used by an operator surface. */
 export interface EventStoreAdmin {
-  getById(id: number): Promise<EventRecord | undefined>
+  getById(id: string): Promise<EventRecord | undefined>
   list(filter: { status?: EventStatus; route?: string; limit?: number }): Promise<EventSummary[]>
   countByStatus(): Promise<Record<string, number>>
   perRouteStats(): Promise<RouteStats[]>
-  replay(id: number): Promise<boolean>
+  replay(id: string): Promise<boolean>
   replayAllParked(): Promise<number>
 }
 

@@ -1,7 +1,7 @@
 import type { EventEmitter } from 'node:events'
 import type { RuntimeSettings } from '../config/runtime.js'
 import type { ControlStore, EventRecord as EventRow, EventStore, RouteProvider } from '../engine/store.js'
-import { decrypt } from '../crypto/at-rest.js'
+import type { PayloadCodec } from '../engine/codec.js'
 import type { Json } from '../mask/paths.js'
 import { RelayHooks } from '../engine/hooks.js'
 import { log, type Logger } from '../log.js'
@@ -28,8 +28,10 @@ export interface DispatcherDeps {
   routes: RouteProvider
   settings: Pick<RuntimeSettings, 'dispatch' | 'retention'>
   client: EndCloseClient
-  dataKey: Buffer
+  codec: PayloadCodec
   maskingKey: Buffer
+  /** Lease owner recorded on claimed rows; a stable id lets a restarted instance reclaim its own. */
+  instanceId: string
   signal: EventEmitter
   hooks?: RelayHooks
   logger?: Logger
@@ -95,7 +97,7 @@ export class Dispatcher {
     const now = new Date().toISOString()
     if (this.needsRecover) {
       try {
-        const recovered = await this.deps.store.recoverDelivering(now)
+        const recovered = await this.deps.store.recoverDelivering(now, this.deps.instanceId)
         this.needsRecover = false
         if (recovered > 0) this.log.info('recovered in-flight events', { count: recovered })
       } catch (err) {
@@ -116,7 +118,10 @@ export class Dispatcher {
       const route = await this.deps.routes.get(routeId)
       if (!route) continue
 
-      const claimed = await this.deps.store.claimDue(routeId, now, this.deps.settings.dispatch.batch_max)
+      const claimed = await this.deps.store.claimDue(routeId, now, this.deps.settings.dispatch.batch_max, {
+        owner: this.deps.instanceId,
+        until: new Date(Date.now() + this.deps.settings.dispatch.lease_ms).toISOString(),
+      })
       if (claimed.length === 0) continue
       try {
         await this.deliverBatch(route.id, claimed)
@@ -137,7 +142,7 @@ export class Dispatcher {
       let payloadKeys: string | undefined
       let bodyBytes: number | undefined
       try {
-        const plaintext = decrypt(this.deps.dataKey, event.payload_enc, event.payload_iv)
+        const plaintext = this.deps.codec.decode(event.payload, event.payload_iv)
         bodyBytes = plaintext.length
         const payload = JSON.parse(plaintext.toString('utf8')) as Json
         payloadKeys = jsonTopLevelKeys(payload)

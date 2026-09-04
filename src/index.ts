@@ -21,6 +21,7 @@ import { VERSION } from './version.js'
 import { envSecrets } from './engine/secrets.js'
 import { RelayHooks } from './engine/hooks.js'
 import { DbRouteProvider, SqliteControlStore, SqliteEventStore } from './db/sqlite-store.js'
+import { aesGcmCodec } from './engine/codec.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
@@ -180,6 +181,7 @@ async function main(): Promise<void> {
   }
 
   const store = new SqliteEventStore(db)
+  const codec = aesGcmCodec(dataKey)
   const control = new SqliteControlStore(db)
   const routes = new DbRouteProvider(db)
   const dispatcher = new Dispatcher({
@@ -188,8 +190,10 @@ async function main(): Promise<void> {
     routes,
     settings,
     client,
-    dataKey,
+    codec,
     maskingKey,
+    // The appliance is single-instance by design: a stable owner reclaims its own leases on restart.
+    instanceId: 'appliance',
     signal,
     hooks,
   })
@@ -199,7 +203,7 @@ async function main(): Promise<void> {
     store,
     control,
     routes,
-    dataKey,
+    codec,
     signal,
     hooks,
     secrets: secretResolver,

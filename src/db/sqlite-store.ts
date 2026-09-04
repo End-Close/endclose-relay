@@ -1,5 +1,5 @@
 import type { Db } from './db.js'
-import { EventsRepo } from './repo/events.js'
+import { EventsRepo, type EventRow } from './repo/events.js'
 import { KvRepo } from './repo/kv.js'
 import { RoutesRepo } from './repo/routes.js'
 import { BUSY_RETRY_ATTEMPTS, INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from './busy.js'
@@ -14,6 +14,7 @@ import {
   type EventSummary,
   type InsertResult,
   type Killswitch,
+  type Lease,
   type NewEvent,
   type RouteProvider,
   type RouteStats,
@@ -23,6 +24,22 @@ import type { RouteConfig } from '../config/schema.js'
 // SQLite implementations of the engine's storage contracts. Lock contention (SQLITE_BUSY,
 // common on network filesystems such as EFS) is retried here and surfaced as
 // StoreUnavailableError; every other error is rethrown tagged with the operation name.
+
+function toRecord(row: EventRow): EventRecord {
+  const { payload_enc, payload_iv, ...rest } = row
+  return {
+    ...rest,
+    id: String(row.id),
+    payload: payload_enc,
+    payload_iv: payload_iv.length === 0 ? null : payload_iv,
+  }
+}
+
+function toSummary<T extends { id: number }>(row: T): Omit<T, 'id'> & { id: string } {
+  return { ...row, id: String(row.id) }
+}
+
+const numericIds = (ids: string[]) => ids.map(Number)
 
 export class SqliteEventStore implements EventStore, EventStoreAdmin {
   readonly repo: EventsRepo
@@ -46,29 +63,38 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
   }
 
   async insert(e: NewEvent): Promise<InsertResult> {
-    const id = await this.run('insert', () => this.repo.insert(e), INGEST_BUSY_RETRY_ATTEMPTS)
-    return id === null ? { duplicate: true } : { duplicate: false, id }
+    const { payload, payload_iv, ...rest } = e
+    const row = { ...rest, payload_enc: payload, payload_iv: payload_iv ?? Buffer.alloc(0) }
+    const id = await this.run('insert', () => this.repo.insert(row), INGEST_BUSY_RETRY_ATTEMPTS)
+    return id === null ? { duplicate: true } : { duplicate: false, id: String(id) }
   }
   routesWithDueEvents(now: string): Promise<string[]> {
     return this.run('routesWithDueEvents', () => this.repo.routesWithDueEvents(now))
   }
-  claimDue(routeId: string, now: string, limit: number): Promise<EventRecord[]> {
-    return this.run('claimDue', () => this.repo.claimDue(routeId, now, limit))
+  async claimDue(routeId: string, now: string, limit: number, lease: Lease): Promise<EventRecord[]> {
+    const rows = await this.run('claimDue', () =>
+      this.repo.claimDue(routeId, now, limit, lease.owner, lease.until),
+    )
+    return rows.map(toRecord)
   }
-  markDelivered(ids: number[], deliveredAt: string, bulkRequestId: string | null): Promise<void> {
-    return this.run('markDelivered', () => this.repo.markDelivered(ids, deliveredAt, bulkRequestId))
+  markDelivered(ids: string[], deliveredAt: string, bulkRequestId: string | null): Promise<void> {
+    return this.run('markDelivered', () =>
+      this.repo.markDelivered(numericIds(ids), deliveredAt, bulkRequestId),
+    )
   }
-  markFailed(ids: number[], nextAttemptAt: string, error: string): Promise<void> {
-    return this.run('markFailed', () => this.repo.markFailed(ids, nextAttemptAt, error))
+  markFailed(ids: string[], nextAttemptAt: string, error: string): Promise<void> {
+    return this.run('markFailed', () => this.repo.markFailed(numericIds(ids), nextAttemptAt, error))
   }
-  markParked(ids: number[], error: string): Promise<void> {
-    return this.run('markParked', () => this.repo.markParked(ids, error))
+  markParked(ids: string[], error: string): Promise<void> {
+    return this.run('markParked', () => this.repo.markParked(numericIds(ids), error))
   }
-  releaseDelivering(ids: number[], nextAttemptAt: string, error: string): Promise<number> {
-    return this.run('releaseDelivering', () => this.repo.releaseDelivering(ids, nextAttemptAt, error))
+  releaseDelivering(ids: string[], nextAttemptAt: string, error: string): Promise<number> {
+    return this.run('releaseDelivering', () =>
+      this.repo.releaseDelivering(numericIds(ids), nextAttemptAt, error),
+    )
   }
-  recoverDelivering(now: string): Promise<number> {
-    return this.run('recoverDelivering', () => this.repo.recoverDelivering(now))
+  recoverDelivering(now: string, owner?: string): Promise<number> {
+    return this.run('recoverDelivering', () => this.repo.recoverDelivering(now, owner))
   }
   parkExpired(now: string, maxAgeMs: number): Promise<number> {
     return this.run('parkExpired', () => this.repo.parkExpired(now, maxAgeMs))
@@ -78,11 +104,13 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
   }
 
   // ── admin capability ──
-  getById(id: number): Promise<EventRecord | undefined> {
-    return this.run('getById', () => this.repo.getById(id))
+  async getById(id: string): Promise<EventRecord | undefined> {
+    const row = await this.run('getById', () => this.repo.getById(Number(id)))
+    return row ? toRecord(row) : undefined
   }
-  list(filter: { status?: EventStatus; route?: string; limit?: number }): Promise<EventSummary[]> {
-    return this.run('list', () => this.repo.list(filter))
+  async list(filter: { status?: EventStatus; route?: string; limit?: number }): Promise<EventSummary[]> {
+    const rows = await this.run('list', () => this.repo.list(filter))
+    return rows.map(toSummary)
   }
   countByStatus(): Promise<Record<string, number>> {
     return this.run('countByStatus', () => this.repo.countByStatus())
@@ -90,8 +118,8 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
   perRouteStats(): Promise<RouteStats[]> {
     return this.run('perRouteStats', () => this.repo.perRouteStats())
   }
-  replay(id: number): Promise<boolean> {
-    return this.run('replay', () => this.repo.replay(id))
+  replay(id: string): Promise<boolean> {
+    return this.run('replay', () => this.repo.replay(Number(id)))
   }
   replayAllParked(): Promise<number> {
     return this.run('replayAllParked', () => this.repo.replayAllParked())
@@ -100,10 +128,8 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
 
 export class SqliteControlStore implements ControlStore {
   private kv: KvRepo
-  private routes: RoutesRepo
   constructor(db: Db) {
     this.kv = new KvRepo(db)
-    this.routes = new RoutesRepo(db)
   }
   async getKillswitch(): Promise<Killswitch> {
     return this.kv.globalKillswitch()
@@ -112,10 +138,10 @@ export class SqliteControlStore implements ControlStore {
     this.kv.setGlobalKillswitch(state)
   }
   async isRoutePaused(routeId: string): Promise<boolean> {
-    return this.routes.isPaused(routeId)
+    return this.kv.isRoutePaused(routeId)
   }
   async setRoutePaused(routeId: string, paused: boolean): Promise<void> {
-    this.routes.setPaused(routeId, paused)
+    this.kv.setRoutePaused(routeId, paused)
   }
 }
 

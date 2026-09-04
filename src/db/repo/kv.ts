@@ -21,6 +21,10 @@ export class KvRepo {
       .run(key, value, new Date().toISOString())
   }
 
+  delete(key: string): void {
+    this.db.prepare('DELETE FROM kv WHERE key = ?').run(key)
+  }
+
   globalKillswitch(): GlobalKillswitch {
     const v = this.get('killswitch.global')
     return v === 'pause' || v === 'panic' ? v : 'none'
@@ -28,5 +32,14 @@ export class KvRepo {
 
   setGlobalKillswitch(state: GlobalKillswitch): void {
     this.set('killswitch.global', state)
+  }
+
+  isRoutePaused(routeId: string): boolean {
+    return this.get(`route_paused.${routeId}`) === '1'
+  }
+
+  setRoutePaused(routeId: string, paused: boolean): void {
+    if (paused) this.set(`route_paused.${routeId}`, '1')
+    else this.delete(`route_paused.${routeId}`)
   }
 }
