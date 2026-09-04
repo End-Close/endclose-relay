@@ -1,4 +1,4 @@
-import { log } from '../log.js'
+import { log, type Logger } from '../log.js'
 
 export const SQLITE_BUSY_TIMEOUT_MS = 15_000
 export const BUSY_RETRY_ATTEMPTS = 3
@@ -14,6 +14,7 @@ export function isSqliteBusy(err: unknown): boolean {
 export interface BusyRetryOpts {
   attempts?: number
   delayMs?: number
+  logger?: Logger
 }
 
 /** Retry a synchronous SQLite call after SQLITE_BUSY; sqlite's busy_timeout already waited once. */
@@ -24,6 +25,7 @@ export async function withBusyRetry<T>(
 ): Promise<T> {
   const attempts = opts.attempts ?? BUSY_RETRY_ATTEMPTS
   const delayMs = opts.delayMs ?? DEFAULT_DELAY_MS
+  const logger = opts.logger ?? log
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {
@@ -32,7 +34,7 @@ export async function withBusyRetry<T>(
       last = err
       if (!isSqliteBusy(err) || i === attempts - 1) {
         if (isSqliteBusy(err)) {
-          log.warn('sqlite busy exhausted', {
+          logger.warn('sqlite busy exhausted', {
             op,
             attempts,
             error: (err as Error).message,
@@ -40,7 +42,7 @@ export async function withBusyRetry<T>(
         }
         throw err
       }
-      log.warn('sqlite busy, retrying', {
+      logger.warn('sqlite busy, retrying', {
         op,
         attempt: i + 1,
         error: (err as Error).message,

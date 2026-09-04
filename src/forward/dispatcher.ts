@@ -9,7 +9,7 @@ import { decrypt } from '../crypto/at-rest.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
 import type { Telemetry } from './telemetry.js'
-import { log } from '../log.js'
+import { log, type Logger } from '../log.js'
 import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { nextAttemptAt } from './backoff.js'
 import { mapEvent, MappingError, type EndCloseRecord } from './mapper.js'
@@ -36,12 +36,14 @@ export interface DispatcherDeps {
   signal: EventEmitter
   metrics: Metrics
   telemetry?: Telemetry
+  logger?: Logger
 }
 
 export class Dispatcher {
   private events: EventsRepo
   private routes: RoutesRepo
   private kv: KvRepo
+  private log: Logger
   private running = false
   private wakeRequested = false
   private needsRecover = false
@@ -54,6 +56,7 @@ export class Dispatcher {
     this.events = new EventsRepo(deps.db)
     this.routes = new RoutesRepo(deps.db)
     this.kv = new KvRepo(deps.db)
+    this.log = deps.logger ?? log
   }
 
   start(): void {
@@ -61,10 +64,10 @@ export class Dispatcher {
     // Events stuck mid-dispatch from a previous crash go back on the queue.
     try {
       const recovered = this.events.recoverDelivering(new Date().toISOString())
-      if (recovered > 0) log.info('recovered in-flight events after restart', { count: recovered })
+      if (recovered > 0) this.log.info('recovered in-flight events after restart', { count: recovered })
     } catch (err) {
       this.needsRecover = true
-      log.error('boot recover delivering failed', { error: (err as Error).message })
+      this.log.error('boot recover delivering failed', { error: (err as Error).message })
       this.deps.telemetry?.captureError('recover_delivering', err)
     }
 
@@ -94,7 +97,7 @@ export class Dispatcher {
           await this.cycle()
         } catch (err) {
           const op = (err as { op?: string }).op
-          log.error('dispatch cycle failed', {
+          this.log.error('dispatch cycle failed', {
             error: (err as Error).message,
             ...(op ? { op } : {}),
           })
@@ -112,9 +115,9 @@ export class Dispatcher {
           this.events.recoverDelivering(now),
         )
         this.needsRecover = false
-        if (recovered > 0) log.warn('recovered stuck delivering events', { count: recovered })
+        if (recovered > 0) this.log.warn('recovered stuck delivering events', { count: recovered })
       } catch (err) {
-        log.error('recover delivering failed', { error: (err as Error).message })
+        this.log.error('recover delivering failed', { error: (err as Error).message })
         this.deps.telemetry?.captureError('recover_delivering', err)
       }
     }
@@ -170,7 +173,7 @@ export class Dispatcher {
             this.events.markParked([event.id], `mapping failed: ${err.message}`),
           )
           this.deps.metrics.forward(routeId, 'parked')
-          log.warn('event parked: mapping failed', {
+          this.log.warn('event parked: mapping failed', {
             route: routeId,
             event_id: event.event_id,
             body_bytes: bodyBytes,
@@ -186,7 +189,7 @@ export class Dispatcher {
     try {
       const summary = await this.postWithRetries(records)
       await this.settleResults(summary.id, mapped)
-      log.info('batch forwarded', {
+      this.log.info('batch forwarded', {
         route: routeId,
         events: mapped.length,
         bulk_request_id: summary.id,
@@ -198,7 +201,7 @@ export class Dispatcher {
           this.events.markParked(ids, `${err.message}: ${err.body}`),
         )
         this.deps.metrics.forward(routeId, 'parked', ids.length)
-        log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
+        this.log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
         this.deps.telemetry?.capture('relay_batch_parked', {
           route: routeId,
           status: err.status,
@@ -215,7 +218,7 @@ export class Dispatcher {
         )
         await this.dbOp('markFailed', () => this.events.markFailed(ids, next, (err as Error).message))
         this.deps.metrics.forward(routeId, 'retried', ids.length)
-        log.warn('batch delivery failed, will retry', {
+        this.log.warn('batch delivery failed, will retry', {
           route: routeId,
           events: ids.length,
           error: (err as Error).message,
@@ -326,11 +329,11 @@ export class Dispatcher {
         if (batch.wiped === 0 && batch.deleted === 0) break
         await sleep(PRUNE_YIELD_MS)
       }
-      if (wiped || deleted) log.info('retention prune', { wiped, deleted })
+      if (wiped || deleted) this.log.info('retention prune', { wiped, deleted })
     } catch (err) {
       // Prune must not block forwarding. lastPruneAt used to be set before prune()
       // ran, so a lock error skipped both dispatch and the next hour of retention.
-      log.error('retention prune failed', { error: (err as Error).message })
+      this.log.error('retention prune failed', { error: (err as Error).message })
       this.deps.telemetry?.captureError('prune', err)
     }
   }
@@ -342,11 +345,11 @@ export class Dispatcher {
         this.events.releaseDelivering(ids, new Date().toISOString(), error),
       )
       if (n > 0) {
-        log.warn('released leftover delivering events', { count: n, error })
+        this.log.warn('released leftover delivering events', { count: n, error })
       }
     } catch (err) {
       this.needsRecover = true
-      log.error('failed to release leftover delivering events', {
+      this.log.error('failed to release leftover delivering events', {
         error: (err as Error).message,
         count: ids.length,
       })
@@ -356,7 +359,7 @@ export class Dispatcher {
 
   private async dbOp<T>(op: string, fn: () => T): Promise<T> {
     try {
-      return await withBusyRetry(op, fn)
+      return await withBusyRetry(op, fn, { logger: this.log })
     } catch (err) {
       ;(err as { op?: string }).op = op
       throw err

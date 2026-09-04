@@ -11,7 +11,7 @@ import { adapterFor } from './adapters/registry.js'
 import type { Json } from '../mask/paths.js'
 import type { Metrics } from '../metrics/metrics.js'
 import type { Telemetry } from '../forward/telemetry.js'
-import { log } from '../log.js'
+import { log, type Logger } from '../log.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
 
 // Headers persisted alongside the payload for debugging/replay. Auth headers are
@@ -25,6 +25,7 @@ export interface IngestDeps {
   signal: EventEmitter
   metrics: Metrics
   telemetry?: Telemetry
+  logger?: Logger
 }
 
 function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
@@ -41,6 +42,7 @@ function escapeRe(s: string): string {
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
   const { db, dataKey, signal, metrics, telemetry } = deps
+  const logger = deps.logger ?? log
   const events = new EventsRepo(db)
   const routes = new RoutesRepo(db)
   const kv = new KvRepo(db)
@@ -85,7 +87,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     const verdict = adapter.verify(raw, route)
     if (!verdict.ok) {
       metrics.ingest(routeId, 'rejected_auth')
-      log.warn('ingest rejected', { route: routeId, reason: verdict.reason })
+      logger.warn('ingest rejected', { route: routeId, reason: verdict.reason })
       return reply.code(401).send({ error: 'verification failed' })
     }
 
@@ -101,7 +103,7 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
     const eventType = adapter.extractEventType(body, raw, route)
     const filtered = route.events && !eventTypeMatches(route.events, eventType)
     // Shape-only debug metadata (no values) — enable with LOG_LEVEL=debug.
-    log.debug('ingest shape', {
+    logger.debug('ingest shape', {
       route: routeId,
       event_type: eventType,
       body_bytes: rawBody.length,
@@ -135,10 +137,10 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
             idempotency_key:
               'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
           }),
-        { attempts: INGEST_BUSY_RETRY_ATTEMPTS },
+        { attempts: INGEST_BUSY_RETRY_ATTEMPTS, logger },
       )
     } catch (err) {
-      log.error('ingest persist failed', { route: routeId, error: (err as Error).message })
+      logger.error('ingest persist failed', { route: routeId, error: (err as Error).message })
       telemetry?.captureError('ingest_persist', err, { route: routeId })
       const retryable = isSqliteBusy(err)
       return reply
@@ -148,12 +150,12 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
     if (insertedId === null) {
       metrics.ingest(routeId, 'duplicate')
-      log.info('duplicate event acked', { route: routeId, event_type: eventType })
+      logger.info('duplicate event acked', { route: routeId, event_type: eventType })
       return reply.code(200).send({ status: 'duplicate' })
     }
 
     metrics.ingest(routeId, filtered ? 'filtered' : 'accepted')
-    log.info('event ingested', {
+    logger.info('event ingested', {
       route: routeId,
       event_type: eventType,
       filtered: Boolean(filtered),
