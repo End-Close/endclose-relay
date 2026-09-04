@@ -1,18 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import { createHash } from 'node:crypto'
-import { EventEmitter } from 'node:events'
-import { StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from '../engine/store.js'
-import { encrypt } from '../crypto/at-rest.js'
-import { adapterFor } from './adapters/registry.js'
-import type { Json } from '../mask/paths.js'
-import { RelayHooks, type IngestOutcome } from '../engine/hooks.js'
+import type { EventEmitter } from 'node:events'
+import type { ControlStore, EventStore, RouteProvider } from '../engine/store.js'
+import type { RelayHooks } from '../engine/hooks.js'
 import { log, type Logger } from '../log.js'
 import { envSecrets, type SecretResolver } from '../engine/secrets.js'
-import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
+import { ingestWebhook } from '../engine/ingest.js'
 
-// Headers persisted alongside the payload for debugging/replay. Auth headers are
-// deliberately excluded — secrets never reach the database.
-const PERSISTED_HEADERS = ['content-type', 'user-agent']
+// The appliance's webhook listener: a thin Fastify shell around the engine's ingest path.
 
 export interface IngestDeps {
   store: EventStore
@@ -27,27 +21,16 @@ export interface IngestDeps {
   secrets?: SecretResolver
 }
 
-function eventTypeMatches(patterns: string[], eventType: string | null): boolean {
-  if (patterns.length === 0) return true
-  if (eventType === null) return false
-  return patterns.some((p) =>
-    p.includes('*') ? new RegExp(`^${p.split('*').map(escapeRe).join('.*')}$`).test(eventType) : p === eventType,
-  )
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
-  const { store, control, routes, dataKey, signal } = deps
-  const hooks = deps.hooks ?? new RelayHooks()
-  const logger = deps.logger ?? log
-  const secrets = deps.secrets ?? envSecrets()
+  const engineDeps = {
+    ...deps,
+    logger: deps.logger ?? log,
+    secrets: deps.secrets ?? envSecrets(),
+  }
 
   const app = Fastify({
     logger: false,
-    bodyLimit: 10 * 1024 * 1024, // hard ceiling; per-route limits enforced below
+    bodyLimit: 10 * 1024 * 1024, // hard ceiling; per-route limits enforced by the engine
     trustProxy: true,
   })
 
@@ -61,109 +44,12 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
 
   app.post('/ingest/:routeId', async (request, reply) => {
     const { routeId } = request.params as { routeId: string }
-    const route = await routes.get(routeId)
-    if (!route) return reply.code(404).send({ error: 'unknown route' })
-    const rawBody = request.body as Buffer
-    const bodyBytes = Buffer.isBuffer(rawBody) ? rawBody.length : 0
-    const ingested = (outcome: IngestOutcome, eventType: string | null = null) =>
-      hooks.emit('ingest', { routeId, outcome, eventType, bodyBytes })
-
-    // Panic refuses at the door; the processor's own retries carry the window.
-    if ((await control.getKillswitch()) === 'panic') {
-      ingested('panic')
-      return reply.code(503).send({ error: 'relay is in panic mode' })
-    }
-
-    if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
-      ingested('rejected_json')
-      return reply.code(400).send({ error: 'empty body' })
-    }
-    if (rawBody.length > route.max_body_bytes) {
-      ingested('rejected_size')
-      return reply.code(413).send({ error: 'body too large' })
-    }
-
-    const adapter = adapterFor(route.source)
-    const raw = { rawBody, headers: request.headers, remoteIp: request.ip }
-    const secret = secrets.resolve(route.auth.secret_env)
-    if (secret === undefined) {
-      logger.error('ingest secret unavailable', { route: routeId, secret_env: route.auth.secret_env })
-      return reply.code(500).send({ error: 'internal error' })
-    }
-    const verdict = adapter.verify(raw, route, { secret })
-    if (!verdict.ok) {
-      ingested('rejected_auth')
-      logger.warn('ingest rejected', { route: routeId, reason: verdict.reason })
-      return reply.code(401).send({ error: 'verification failed' })
-    }
-
-    let body: Json
-    try {
-      body = JSON.parse(rawBody.toString('utf8')) as Json
-    } catch {
-      ingested('rejected_json')
-      return reply.code(400).send({ error: 'invalid JSON' })
-    }
-
-    const eventId = adapter.extractEventId(body, raw, route)
-    const eventType = adapter.extractEventType(body, raw, route)
-    const filtered = route.events && !eventTypeMatches(route.events, eventType)
-    // Shape-only debug metadata (no values) — enable with LOG_LEVEL=debug.
-    logger.debug('ingest shape', {
-      route: routeId,
-      event_type: eventType,
-      body_bytes: rawBody.length,
-      remote_ip: request.ip,
-      header_names: requestHeaderNames(request.headers as Record<string, unknown>),
-      payload_keys: jsonTopLevelKeys(body),
+    const result = await ingestWebhook(engineDeps, routeId, {
+      rawBody: request.body as Buffer,
+      headers: request.headers,
+      remoteIp: request.ip,
     })
-
-    const { ciphertext, iv } = encrypt(dataKey, rawBody)
-    const headersJson = JSON.stringify(
-      Object.fromEntries(
-        PERSISTED_HEADERS.map((h) => [h, request.headers[h]]).filter(([, v]) => v !== undefined),
-      ),
-    )
-
-    let inserted
-    try {
-      inserted = await store.insert({
-        route_id: routeId,
-        source: route.source,
-        event_id: eventId,
-        event_type: eventType,
-        payload_enc: ciphertext,
-        payload_iv: iv,
-        headers_json: headersJson,
-        received_at: new Date().toISOString(),
-        status: filtered ? 'dropped_by_filter' : 'pending',
-        idempotency_key:
-          'sha256:' + createHash('sha256').update(`${route.source}:${eventId}`).digest('hex'),
-      })
-    } catch (err) {
-      logger.error('ingest persist failed', { route: routeId, error: (err as Error).message })
-      hooks.emit('error', { kind: 'ingest_persist', error: err, routeId })
-      const retryable = err instanceof StoreUnavailableError
-      return reply
-        .code(retryable ? 503 : 500)
-        .send({ error: retryable ? 'temporarily unavailable' : 'internal error' })
-    }
-
-    if (inserted.duplicate) {
-      ingested('duplicate', eventType)
-      logger.info('duplicate event acked', { route: routeId, event_type: eventType })
-      return reply.code(200).send({ status: 'duplicate' })
-    }
-
-    ingested(filtered ? 'filtered' : 'accepted', eventType)
-    hooks.emit('stored', { routeId, id: inserted.id, filtered: Boolean(filtered) })
-    logger.info('event ingested', {
-      route: routeId,
-      event_type: eventType,
-      filtered: Boolean(filtered),
-    })
-    if (!filtered) signal.emit('event', routeId)
-    return reply.code(200).send({ status: filtered ? 'filtered' : 'accepted' })
+    return reply.code(result.status).send(result.body)
   })
 
   return app
