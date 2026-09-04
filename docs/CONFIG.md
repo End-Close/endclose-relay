@@ -40,6 +40,8 @@ can never sit in the document silently doing nothing.
 | `RELAY_BACKOFF_BASE_MS` / `RELAY_BACKOFF_CAP_MS` | `1000` / `600000` | retry curve: base·2ⁿ ±20% jitter, capped |
 | `RELAY_PARK_AFTER_MS` | 7 days | retrying events park (never dropped) after this |
 | `RELAY_LEASE_MS` | `600000` | how long a claimed batch stays reserved before another instance may recover it |
+| `RELAY_RECOVER_INTERVAL_MS` | `60000` | how often a running relay sweeps for expired leases left by a crashed peer |
+| `RELAY_INSTANCE_ID` | container hostname | lease owner recorded on claimed batches; unique per task, stable across restarts of the same container |
 | `RELAY_RETENTION_DELIVERED_DAYS` | `7` | payloads of delivered/filtered events wiped after |
 | `RELAY_RETENTION_LEDGER_DAYS` | `30` | their rows (idempotency ledger) deleted after |
 | `RELAY_TELEMETRY` | on | operational call-home to `api.endclose.com` (`off` / `0` / `false` disables). See [SECURITY.md](./SECURITY.md). |
@@ -69,7 +71,7 @@ optional source-IP allowlist.
 | Field | Default | Notes |
 |---|---|---|
 | `header` | `authorization` | header to compare |
-| `secret_env` | *required* | env var with the expected value (set the same value in Payabli via `webHeaderParameters`). `secret` is accepted as an alias. |
+| `secret_env` | *required* | env var with the expected value (set the same value in Payabli via `webHeaderParameters`) |
 | `allowed_ips` | `[]` | Payabli egress: sandbox `52.3.204.115`, production `54.166.54.170` |
 
 ### `auth` — `mode: hmac` (generic, processors #2..N)

@@ -129,14 +129,14 @@ export class EventsRepo {
    * Rows stuck in 'delivering' whose lease expired (or that belong to `owner`, or that
    * predate leases) go back to 'retry'.
    */
-  recoverDelivering(now: string, owner = ''): number {
+  recoverDelivering(now: string, owner?: string): number {
     return this.db
       .prepare(
         `UPDATE events SET status = 'retry', next_attempt_at = ?, claimed_by = NULL, lease_until = NULL
          WHERE status = 'delivering'
            AND (lease_until IS NULL OR lease_until < ? OR claimed_by = ?)`,
       )
-      .run(now, now, owner).changes
+      .run(now, now, owner ?? null).changes
   }
 
   /**

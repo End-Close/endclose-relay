@@ -1,8 +1,6 @@
 import { pino } from 'pino'
 import type { Logger } from '@endclose/relay'
 
-export type { Logger, LogMeta } from '@endclose/relay'
-
 const base = pino({
   level: process.env.LOG_LEVEL ?? 'info',
   redact: { paths: ['*.authorization', '*.secret'], censor: '[REDACTED]' },

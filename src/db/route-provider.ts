@@ -1,17 +1,19 @@
-import type { RouteConfig, RouteProvider } from '@endclose/relay'
-import type { Db } from '@endclose/relay-sqlite'
+import { noopLogger, type Logger, type RouteConfig, type RouteProvider } from '@endclose/relay'
+import { runSqlite, type Db } from '@endclose/relay-sqlite'
 import { RoutesRepo } from './repo/routes.js'
 
 /** Live route definitions from the appliance database: every config apply is visible immediately. */
 export class DbRouteProvider implements RouteProvider {
   private routes: RoutesRepo
-  constructor(db: Db) {
+  private logger: Logger
+  constructor(db: Db, logger: Logger = noopLogger) {
     this.routes = new RoutesRepo(db)
+    this.logger = logger
   }
-  async get(id: string): Promise<RouteConfig | undefined> {
-    return this.routes.get(id)
+  get(id: string): Promise<RouteConfig | undefined> {
+    return runSqlite('routes.get', () => this.routes.get(id), { logger: this.logger })
   }
-  async all(): Promise<RouteConfig[]> {
-    return this.routes.all()
+  all(): Promise<RouteConfig[]> {
+    return runSqlite('routes.all', () => this.routes.all(), { logger: this.logger })
   }
 }

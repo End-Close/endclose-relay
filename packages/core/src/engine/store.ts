@@ -62,19 +62,31 @@ export type EventSummary = Omit<
 
 export type InsertResult = { duplicate: false; id: string } | { duplicate: true }
 
-/**
- * Thrown by a store when it is temporarily unable to serve a request (lock contention,
- * connection loss). Ingest answers 503 so the processor retries; anything else is 500.
- */
-export class StoreUnavailableError extends Error {
+/** A store operation failed. `op` names the operation for logs and hooks. */
+export class StoreError extends Error {
   constructor(
     message: string,
     readonly op: string,
     options?: { cause?: unknown },
   ) {
     super(message, options)
+    this.name = 'StoreError'
+  }
+}
+
+/**
+ * The store is temporarily unable to serve a request (lock contention, connection
+ * loss). Ingest answers 503 so the processor retries; any other StoreError is 500.
+ */
+export class StoreUnavailableError extends StoreError {
+  constructor(message: string, op: string, options?: { cause?: unknown }) {
+    super(message, op, options)
     this.name = 'StoreUnavailableError'
   }
+}
+
+export function storeOp(err: unknown): string | undefined {
+  return err instanceof StoreError ? err.op : undefined
 }
 
 /** What the engine needs from event storage. */
@@ -98,6 +110,8 @@ export interface EventStore {
    * so a restarted instance reclaims its own work immediately — to `retry`.
    */
   recoverDelivering(now: string, owner?: string): Promise<number>
+  /** Row counts by status. Cheap aggregate the engine uses to judge backlog. */
+  countByStatus(): Promise<Record<string, number>>
   /** Park events that have been retrying longer than `maxAgeMs`. */
   parkExpired(now: string, maxAgeMs: number): Promise<number>
   /** One bounded retention step; callers loop until it returns zeros. */
@@ -119,7 +133,6 @@ export interface Lease {
 export interface EventStoreAdmin {
   getById(id: string): Promise<EventRecord | undefined>
   list(filter: { status?: EventStatus; route?: string; limit?: number }): Promise<EventSummary[]>
-  countByStatus(): Promise<Record<string, number>>
   perRouteStats(): Promise<RouteStats[]>
   replay(id: string): Promise<boolean>
   replayAllParked(): Promise<number>

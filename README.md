@@ -156,8 +156,8 @@ pnpm dev:all     # mprocs: relay (watch mode) + mock End Close API
 ```
 
 Tests resolve the packages from source (see `vitest.config.ts`); `pnpm dev`, `pnpm typecheck`
-and `pnpm build` build the packages first. After editing `packages/*`, re-run
-`pnpm build:packages` for the watch-mode relay to pick the change up.
+and `pnpm build` build the packages first (incrementally, via `tsc -b`). After editing
+`packages/*`, re-run `pnpm build:packages` for the watch-mode relay to pick the change up.
 
 `pnpm dev:all` starts [mprocs](https://github.com/pvolok/mprocs) with the relay in watch
 mode (seed config `dev/relay.dev.yaml`, dev secrets from `mprocs.yaml`, admin auth

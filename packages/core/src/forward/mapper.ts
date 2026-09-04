@@ -9,6 +9,7 @@ import {
 } from '../config/schema.js'
 import { hardDenyDeep } from '../mask/defaults.js'
 import { getAtPath, leafPaths, type Json } from '../mask/paths.js'
+import { escapeRe } from '../util/strings.js'
 
 export interface EndCloseRecord {
   date: string
@@ -163,6 +164,3 @@ export function mapEvent(
   return { record, report }
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}

@@ -42,8 +42,8 @@ const dateRefSchema = z.union([
 export type DateRef = z.infer<typeof dateRefSchema>
 
 // A secret reference: the NAME the host's SecretResolver resolves (an env var in the
-// appliance). The value itself never appears in config or the database. `secret` is
-// accepted as an alias and normalised to `secret_env` (see normalizeAuth).
+// appliance). The value itself never appears in config or the database. The field is
+// deliberately named as a reference so a value is never mistaken for it.
 const secretRef = z.string().min(1)
 
 export const payabliAuthSchema = z.object({
@@ -102,21 +102,10 @@ export const recordMapSchema = z
     }
   })
 
-/** Accept `auth.secret` as an alias of `auth.secret_env`. */
-function normalizeAuth(v: unknown): unknown {
-  if (v === null || typeof v !== 'object' || Array.isArray(v)) return v
-  const auth = (v as { auth?: unknown }).auth
-  if (auth === null || typeof auth !== 'object' || Array.isArray(auth)) return v
-  const a = auth as Record<string, unknown>
-  if (typeof a['secret'] !== 'string' || a['secret_env'] !== undefined) return v
-  const { secret, ...rest } = a
-  return { ...(v as object), auth: { ...rest, secret_env: secret } }
-}
-
 /** Built-in processor adapters. Hosts may register more via createRelay({ adapters }). */
 export const BUILTIN_SOURCES = ['payabli', 'generic_hmac'] as const
 
-export const routeObjectSchema = z.object({
+export const routeSchema = z.object({
   id: z
     .string()
     .regex(/^[a-z0-9][a-z0-9-_]*$/, 'route id must be a lowercase slug'),
@@ -135,7 +124,6 @@ export const routeObjectSchema = z.object({
     .default(1024 * 1024),
 })
 
-export const routeSchema = z.preprocess(normalizeAuth, routeObjectSchema)
 
 // The config document is ROUTES ONLY (strict: unknown top-level keys are rejected).
 // Everything else (End Close endpoint, ports, dispatch/retention tuning) is a boot-time
@@ -148,7 +136,7 @@ export const relayConfigSchema = z
   .strict()
 
 export type RelayConfig = z.infer<typeof relayConfigSchema>
-export type RouteConfig = z.infer<typeof routeObjectSchema>
+export type RouteConfig = z.infer<typeof routeSchema>
 export type RecordMap = z.infer<typeof recordMapSchema>
 export type PayabliAuth = z.infer<typeof payabliAuthSchema>
 export type GenericHmacAuth = z.infer<typeof genericHmacAuthSchema>

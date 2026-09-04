@@ -4,8 +4,13 @@
 // DB-authoritative) config applies live and "restart pending" isn't a concept the
 // operator has to track. The config document contains routes only.
 
+import { hostname } from 'node:os'
+import { DEFAULT_DISPATCH, DEFAULT_RETENTION } from '@endclose/relay'
+
 export interface RuntimeSettings {
   endcloseBaseUrl: string
+  /** Lease owner for claimed batches. Unique per running task; stable across restarts of the same container. */
+  instanceId: string
   ingest: { port: number; host: string }
   admin: { port: number; host: string }
   metrics: { port: number; host: string }
@@ -16,6 +21,7 @@ export interface RuntimeSettings {
     backoff_cap_ms: number
     park_after_ms: number
     lease_ms: number
+    recover_interval_ms: number
   }
   retention: {
     delivered_days: number
@@ -38,6 +44,8 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
   return {
     // Override for staging/testing: ENDCLOSE_BASE_URL=https://api-staging.endclose.com/v1
     endcloseBaseUrl: env.ENDCLOSE_BASE_URL || 'https://api.endclose.com/v1',
+    // Container hostname = container id on Docker/ECS: unique per task, stable across restarts.
+    instanceId: env.RELAY_INSTANCE_ID || hostname(),
     ingest: {
       port: int(env, 'RELAY_INGEST_PORT', 8443),
       host: env.RELAY_INGEST_HOST || '0.0.0.0',
@@ -51,16 +59,17 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       host: env.RELAY_METRICS_HOST || '0.0.0.0',
     },
     dispatch: {
-      batch_max: int(env, 'RELAY_BATCH_MAX', 100),
-      poll_interval_ms: int(env, 'RELAY_POLL_INTERVAL_MS', 250),
-      backoff_base_ms: int(env, 'RELAY_BACKOFF_BASE_MS', 1000),
-      backoff_cap_ms: int(env, 'RELAY_BACKOFF_CAP_MS', 600_000),
-      park_after_ms: int(env, 'RELAY_PARK_AFTER_MS', 7 * 24 * 3600 * 1000),
-      lease_ms: int(env, 'RELAY_LEASE_MS', 600_000),
+      batch_max: int(env, 'RELAY_BATCH_MAX', DEFAULT_DISPATCH.batchMax),
+      poll_interval_ms: int(env, 'RELAY_POLL_INTERVAL_MS', DEFAULT_DISPATCH.pollIntervalMs),
+      backoff_base_ms: int(env, 'RELAY_BACKOFF_BASE_MS', DEFAULT_DISPATCH.backoffBaseMs),
+      backoff_cap_ms: int(env, 'RELAY_BACKOFF_CAP_MS', DEFAULT_DISPATCH.backoffCapMs),
+      park_after_ms: int(env, 'RELAY_PARK_AFTER_MS', DEFAULT_DISPATCH.parkAfterMs),
+      lease_ms: int(env, 'RELAY_LEASE_MS', DEFAULT_DISPATCH.leaseMs),
+      recover_interval_ms: int(env, 'RELAY_RECOVER_INTERVAL_MS', DEFAULT_DISPATCH.recoverIntervalMs),
     },
     retention: {
-      delivered_days: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', 7),
-      ledger_days: int(env, 'RELAY_RETENTION_LEDGER_DAYS', 30),
+      delivered_days: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', DEFAULT_RETENTION.deliveredDays),
+      ledger_days: int(env, 'RELAY_RETENTION_LEDGER_DAYS', DEFAULT_RETENTION.ledgerDays),
     },
     telemetry: { enabled: isTelemetryEnabled(env) },
   }

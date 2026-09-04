@@ -119,6 +119,14 @@ describe('admin API', () => {
     expect((await get('/status')).json().killswitch.routes_paused).toEqual(['payabli-settlements'])
     expect((await post('/routes/nope/pause', { paused: true })).statusCode).toBe(404)
 
+    // A pause belongs to the route: removing the route from config drops it, so a route
+    // re-added later with the same id does not come back silently paused.
+    const withoutSettlements = TEST_CONFIG_YAML.slice(TEST_CONFIG_YAML.indexOf('  - id: payabli-batches'))
+    expect((await post('/config', { yaml: 'routes:\n' + withoutSettlements })).statusCode).toBe(200)
+    expect((await get('/status')).json().killswitch.routes_paused).toEqual([])
+    expect((await post('/config', { yaml: TEST_CONFIG_YAML })).statusCode).toBe(200)
+    expect((await get('/status')).json().killswitch.routes_paused).toEqual([])
+
     await postWebhook()
     const [row] = events.list({})
     expect(row).not.toHaveProperty('payload_enc')
@@ -170,6 +178,10 @@ describe('admin API', () => {
       const bad = (await post('/config/validate', { yaml: 'routes: []' })).json()
       expect(bad.valid).toBe(false)
       expect(bad.error).toBeTruthy()
+
+      const typo = (await post('/config/validate', { yaml: TEST_CONFIG_YAML.replace('source: payabli\n', 'source: payabli_\n') })).json()
+      expect(typo.valid).toBe(false)
+      expect(typo.error).toMatch(/no adapter for source "payabli_"/)
 
       const good = (await post('/config/validate', { yaml: (await get('/config')).json().yaml })).json()
       expect(good.valid).toBe(true)

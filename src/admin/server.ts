@@ -117,6 +117,8 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       .prepare('SELECT config_hash, applied_at FROM config_versions ORDER BY id DESC LIMIT 1')
       .get() as { config_hash: string; applied_at: string } | undefined
     const activeConfig = getActiveConfig(deps.db)?.config
+    const allRoutes = routes.all()
+    const paused = kv.pausedRoutes()
     return {
       version: VERSION,
       mode,
@@ -129,19 +131,16 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       config_error: deps.configError ?? null,
       killswitch: {
         global: kv.globalKillswitch(),
-        routes_paused: routes
-          .all()
-          .filter((r) => kv.isRoutePaused(r.id))
-          .map((r) => r.id),
+        routes_paused: allRoutes.filter((r) => paused.has(r.id)).map((r) => r.id),
       },
       queue: events.countByStatus(),
-      routes: routes.all().map((r) => {
+      routes: allRoutes.map((r) => {
         const s = stats.get(r.id)
         return {
           id: r.id,
           source: r.source,
           data_stream_key: r.map.data_stream_key,
-          paused: kv.isRoutePaused(r.id),
+          paused: paused.has(r.id),
           counts: s?.counts ?? {},
           last_delivered_at: s?.last_delivered_at ?? null,
           oldest_pending_age_s: s?.oldest_pending_at

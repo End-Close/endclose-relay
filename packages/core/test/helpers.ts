@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { deriveKey, parseRoutes } from '../src/index.js'
 
-export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
+// Fixtures live once, at the repo root (scripts/send-webhooks.sh uses them too).
+export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'test', 'fixtures')
 
 export const DATA_KEY = deriveKey('RELAY_DATA_KEY', 'test-data-key-0123456789')
 export const MASKING_KEY = deriveKey('MASKING_HMAC_KEY', 'test-masking-key-0123456789')

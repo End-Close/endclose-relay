@@ -132,6 +132,50 @@ describe('createRelay (embedded engine)', () => {
     expect(Date.now() - t).toBeLessThan(5_000)
   })
 
+  it('a running instance recovers a crashed peer\'s expired lease on a later cycle', async () => {
+    const ec = fakeEndClose()
+    const store = memoryStore()
+    const relay = createRelay({
+      routes: parseRoutes(parse(TEST_CONFIG_YAML)),
+      store,
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', fetch: ec.fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+      dispatch: { recoverIntervalMs: 1 },
+      instanceId: 'b',
+    })
+    await relay.dispatchOnce() // first cycle: nothing to recover, clock starts
+    const { id } = await relay.ingest('payabli-settlements', req(settlement))
+    // Peer 'a' claims the row and dies; its lease expired a second ago.
+    const now = new Date().toISOString()
+    await store.claimDue('payabli-settlements', now, 10, { owner: 'a', until: new Date(Date.now() - 1000).toISOString() })
+    expect((await store.getById(id!))?.status).toBe('delivering')
+    await new Promise((r) => setTimeout(r, 5))
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+  })
+
+  it('flush returns "unroutable" instead of spinning when due events have no route', async () => {
+    const ec = fakeEndClose()
+    const known = new Map(parseRoutes(parse(TEST_CONFIG_YAML)).map((r) => [r.id, r]))
+    const relay = createRelay({
+      routes: { get: async (id) => known.get(id), all: async () => [...known.values()] },
+      store: memoryStore(),
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', fetch: ec.fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+    })
+    await relay.ingest('payabli-settlements', req(settlement))
+    known.delete('payabli-settlements')
+    const t = Date.now()
+    expect(await relay.flush({ timeoutMs: 10_000 })).toMatchObject({ drained: false, reason: 'unroutable' })
+    expect(Date.now() - t).toBeLessThan(2_000)
+    // A detached reference works too.
+    const { flush } = relay
+    expect(await flush({ timeoutMs: 100 })).toMatchObject({ reason: 'unroutable' })
+  })
+
   it('exposes preview and audited payload reads without sending anything', async () => {
     const { relay, ec } = makeRelay()
     const route = parseRoutes(parse(TEST_CONFIG_YAML))[0]!
@@ -164,16 +208,20 @@ describe('createRelay (embedded engine)', () => {
 })
 
 describe('route schema policy', () => {
-  it('accepts auth.secret as an alias of auth.secret_env', async () => {
-    const { routeSchema } = await import('../src/index.js')
-    const r = routeSchema.parse({
-      id: 'x',
-      source: 'payabli',
-      auth: { mode: 'static_header', secret: 'MY_SECRET' },
-      map: { data_stream_key: 'k', external_id: 'a', amount: 'b', direction: 'credit' },
-    })
-    expect(r.auth.secret_env).toBe('MY_SECRET')
-    expect((r.auth as Record<string, unknown>)['secret']).toBeUndefined()
+  it('only accepts secret references (secret_env), never a value-shaped key', async () => {
+    const { routeSchema, parseRoutes } = await import('../src/index.js')
+    const map = { data_stream_key: 'k', external_id: 'a', amount: 'b', direction: 'credit' }
+    expect(() =>
+      routeSchema.parse({ id: 'x', source: 'payabli', auth: { mode: 'static_header', secret: 'whsec_value' }, map }),
+    ).toThrow()
+    expect(() =>
+      parseRoutes({ routes: [{ id: 'x', source: 'payabli_', auth: { mode: 'static_header', secret_env: 'S' }, map }] }),
+    ).toThrow(/no adapter for source "payabli_"/)
+    expect(
+      parseRoutes({ routes: [{ id: 'x', source: 'acme', auth: { mode: 'static_header', secret_env: 'S' }, map }] }, {
+        adapters: { acme: (await import('../src/index.js')).payabliAdapter },
+      })[0]!.source,
+    ).toBe('acme')
   })
 
   it('rejects static routes whose source has no adapter, and accepts host-registered ones', async () => {

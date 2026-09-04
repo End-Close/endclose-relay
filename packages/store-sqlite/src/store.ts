@@ -4,6 +4,7 @@ import { KvRepo } from './repo/kv.js'
 import { BUSY_RETRY_ATTEMPTS, INGEST_BUSY_RETRY_ATTEMPTS, isSqliteBusy, withBusyRetry } from './busy.js'
 import {
   noopLogger,
+  StoreError,
   StoreUnavailableError,
   type ControlStore,
   type Logger,
@@ -21,7 +22,23 @@ import {
 
 // SQLite implementations of the engine's storage contracts. Lock contention (SQLITE_BUSY,
 // common on network filesystems such as EFS) is retried here and surfaced as
-// StoreUnavailableError; every other error is rethrown tagged with the operation name.
+// StoreUnavailableError; every other failure becomes a StoreError carrying the operation
+// name, with the original error as `cause`.
+
+/** Run one synchronous better-sqlite3 call with busy retry and error classification. */
+export async function runSqlite<T>(
+  op: string,
+  fn: () => T,
+  opts: { attempts?: number; logger?: Logger } = {},
+): Promise<T> {
+  try {
+    return await withBusyRetry(op, fn, { attempts: opts.attempts ?? BUSY_RETRY_ATTEMPTS, logger: opts.logger ?? noopLogger })
+  } catch (err) {
+    if (isSqliteBusy(err)) throw new StoreUnavailableError((err as Error).message, op, { cause: err })
+    if (err instanceof StoreError) throw err
+    throw new StoreError((err as Error).message, op, { cause: err })
+  }
+}
 
 function toRecord(row: EventRow): EventRecord {
   const { payload_enc, payload_iv, ...rest } = row
@@ -48,16 +65,8 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
     this.log = opts.logger ?? noopLogger
   }
 
-  private async run<T>(op: string, fn: () => T, attempts = BUSY_RETRY_ATTEMPTS): Promise<T> {
-    try {
-      return await withBusyRetry(op, fn, { attempts, logger: this.log })
-    } catch (err) {
-      if (isSqliteBusy(err)) {
-        throw new StoreUnavailableError((err as Error).message, op, { cause: err })
-      }
-      ;(err as { op?: string }).op = op
-      throw err
-    }
+  private run<T>(op: string, fn: () => T, attempts?: number): Promise<T> {
+    return runSqlite(op, fn, { logger: this.log, ...(attempts !== undefined ? { attempts } : {}) })
   }
 
   async insert(e: NewEvent): Promise<InsertResult> {
@@ -125,21 +134,23 @@ export class SqliteEventStore implements EventStore, EventStoreAdmin {
 }
 
 export class SqliteControlStore implements ControlStore {
-  private kv: KvRepo
-  constructor(db: Db) {
+  readonly kv: KvRepo
+  private log: Logger
+  constructor(db: Db, opts: { logger?: Logger } = {}) {
     this.kv = new KvRepo(db)
+    this.log = opts.logger ?? noopLogger
   }
-  async getKillswitch(): Promise<Killswitch> {
-    return this.kv.globalKillswitch()
+  getKillswitch(): Promise<Killswitch> {
+    return runSqlite('killswitch', () => this.kv.globalKillswitch(), { logger: this.log })
   }
-  async setKillswitch(state: Killswitch): Promise<void> {
-    this.kv.setGlobalKillswitch(state)
+  setKillswitch(state: Killswitch): Promise<void> {
+    return runSqlite('setKillswitch', () => this.kv.setGlobalKillswitch(state), { logger: this.log })
   }
-  async isRoutePaused(routeId: string): Promise<boolean> {
-    return this.kv.isRoutePaused(routeId)
+  isRoutePaused(routeId: string): Promise<boolean> {
+    return runSqlite('isPaused', () => this.kv.isRoutePaused(routeId), { logger: this.log })
   }
-  async setRoutePaused(routeId: string, paused: boolean): Promise<void> {
-    this.kv.setRoutePaused(routeId, paused)
+  setRoutePaused(routeId: string, paused: boolean): Promise<void> {
+    return runSqlite('setPaused', () => this.kv.setRoutePaused(routeId, paused), { logger: this.log })
   }
 }
 

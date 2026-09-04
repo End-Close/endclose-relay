@@ -1,8 +1,0 @@
-{
-  "Event": "PayOutBatchPaid",
-  "Paypoint": "Acme Field Services",
-  "Text": "Pay out batch 341 has been paid.",
-  "BatchId": "341",
-  "TotalAmount": "$12,450.10",
-  "Method": "ach"
-}

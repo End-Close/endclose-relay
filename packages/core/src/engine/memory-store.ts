@@ -48,8 +48,8 @@ export class MemoryEventStore implements EventStore, EventStoreAdmin {
 
   async claimDue(routeId: string, now: string, limit: number, lease: Lease): Promise<EventRecord[]> {
     const due = [...this.rows.values()]
+      // Map iteration is insertion order, and ids are assigned in insertion order.
       .filter((r) => r.route_id === routeId && this.isDue(r, now))
-      .sort((a, b) => Number(a.id) - Number(b.id))
       .slice(0, limit)
     for (const r of due) {
       r.status = 'delivering'
@@ -102,11 +102,12 @@ export class MemoryEventStore implements EventStore, EventStoreAdmin {
     return n
   }
 
-  async recoverDelivering(now: string, owner = ''): Promise<number> {
+  async recoverDelivering(now: string, owner?: string): Promise<number> {
     let n = 0
     for (const r of this.rows.values()) {
       if (r.status !== 'delivering') continue
-      if (r.lease_until === null || r.lease_until < now || r.claimed_by === owner) {
+      const mine = owner !== undefined && r.claimed_by === owner
+      if (r.lease_until === null || r.lease_until < now || mine) {
         r.status = 'retry'
         r.next_attempt_at = now
         this.clearLease(r)

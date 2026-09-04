@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -10,9 +9,7 @@ import {
   type Db,
 } from '@endclose/relay-sqlite'
 import {
-  aesGcmCodec,
   createRelay,
-  deriveKey,
   envSecrets,
   RelayHooks,
   type DispatchSettings,
@@ -26,53 +23,11 @@ import { Metrics } from '../src/metrics/metrics.js'
 import { log } from '../src/log.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
-
-export const DATA_KEY = deriveKey('RELAY_DATA_KEY', 'test-data-key-0123456789')
-export const MASKING_KEY = deriveKey('MASKING_HMAC_KEY', 'test-masking-key-0123456789')
-export const CODEC = aesGcmCodec(DATA_KEY)
-
-export const TEST_CONFIG_YAML = `
-routes:
-  - id: payabli-settlements
-    source: payabli
-    auth:
-      mode: static_header
-      header: authorization
-      secret_env: PAYABLI_WEBHOOK_SECRET
-    events: ["TransferFunded"]
-    map:
-      data_stream_key: payabli_settlements_funded
-      external_id: transferId
-      amount: NetAmount
-      direction: credit
-      date: { source: transferTime, format: mdy_hms }
-      metadata:
-        batch_id: batchId
-        batch_number: batchNumber
-        total_amount: TotalAmount
-        return_amount: RtAmount
-        entry_point: entryPoint
-        paypoint: Paypoint
-  - id: payabli-batches
-    source: payabli
-    auth:
-      mode: static_header
-      header: authorization
-      secret_env: PAYABLI_WEBHOOK_SECRET
-    events: ["PayOutBatchPaid"]
-    map:
-      data_stream_key: payabli_batches_paid
-      external_id: BatchId
-      amount: TotalAmount
-      direction: debit
-      metadata:
-        method: Method
-        paypoint: Paypoint
-`
+export { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../packages/core/test/helpers.js'
+import { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../packages/core/test/helpers.js'
 
 export function setupDb(ecPort = 9999): {
   db: Db
-  signal: EventEmitter
   metrics: Metrics
   hooks: RelayHooks
   store: SqliteEventStore
@@ -97,12 +52,11 @@ export function setupDb(ecPort = 9999): {
   metrics.subscribe(hooks)
   return {
     db,
-    signal: new EventEmitter(),
     metrics,
     hooks,
-    store: new SqliteEventStore(db),
-    control: new SqliteControlStore(db),
-    routes: new DbRouteProvider(db),
+    store: new SqliteEventStore(db, { logger: log }),
+    control: new SqliteControlStore(db, { logger: log }),
+    routes: new DbRouteProvider(db, log),
   }
 }
 
@@ -119,6 +73,7 @@ export function testDispatch(): DispatchSettings {
     backoffCapMs: 200,
     parkAfterMs: 7 * 24 * 3600 * 1000,
     leaseMs: 600_000,
+    recoverIntervalMs: 60_000,
   }
 }
 
@@ -137,19 +92,4 @@ export function setupRelay(setup: ReturnType<typeof setupDb>, ecPort = 9999): Re
     instanceId: 'test',
     hooks: setup.hooks,
   })
-}
-
-/** Fast dispatch/retention settings for tests (poll 50ms, backoff 20→200ms). */
-export function testSettings() {
-  return {
-    dispatch: {
-      batch_max: 100,
-      poll_interval_ms: 50,
-      backoff_base_ms: 20,
-      backoff_cap_ms: 200,
-      park_after_ms: 7 * 24 * 3600 * 1000,
-      lease_ms: 600_000,
-    },
-    retention: { delivered_days: 7, ledger_days: 30 },
-  }
 }

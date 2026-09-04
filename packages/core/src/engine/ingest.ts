@@ -2,13 +2,14 @@ import { createHash } from 'node:crypto'
 import type { EventEmitter } from 'node:events'
 import { StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from './store.js'
 import type { PayloadCodec } from './codec.js'
-import { adapterFor } from '../ingest/adapters/registry.js'
+import { adapterFor, hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
 import { RelayHooks, type IngestOutcome } from './hooks.js'
 import { noopLogger, type Logger } from '../logger.js'
 import type { SecretResolver } from './secrets.js'
 import { jsonTopLevelKeys, requestHeaderNames } from '../util/payload-shape.js'
+import { escapeRe } from '../util/strings.js'
 
 // The framework-agnostic ingest path: verify → encrypt → persist → ack. A host adapts its
 // HTTP request into a RawRequest and maps the IngestResult back onto its response.
@@ -36,6 +37,7 @@ export type IngestResultOutcome =
   | IngestOutcome
   | 'unknown_route'
   | 'secret_unavailable'
+  | 'unknown_source'
   | 'persist_failed'
   | 'unavailable'
 
@@ -54,10 +56,6 @@ export function eventTypeMatches(patterns: string[], eventType: string | null): 
   return patterns.some((p) =>
     p.includes('*') ? new RegExp(`^${p.split('*').map(escapeRe).join('.*')}$`).test(eventType) : p === eventType,
   )
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** Idempotency key for one inbound event: stable across redeliveries of the same processor event. */
@@ -97,6 +95,10 @@ export async function ingestWebhook(
     return { status: 413, body: { error: 'body too large' }, outcome: 'rejected_size' }
   }
 
+  if (!hasAdapter(route.source, deps.adapters)) {
+    logger.error('ingest route has no adapter', { route: routeId, source: route.source })
+    return { status: 500, body: { error: 'internal error' }, outcome: 'unknown_source' }
+  }
   const adapter = adapterFor(route.source, deps.adapters)
   const secret = secrets.resolve(route.auth.secret_env)
   if (secret === undefined) {

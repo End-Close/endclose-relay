@@ -35,7 +35,7 @@ const relay = createRelay({
   encryption: { dataKey: process.env.RELAY_DATA_KEY! },   // or 'none' (be explicit)
   maskingKey: process.env.MASKING_HMAC_KEY!,              // keys the `hash` transform
   logger: myLogger,                          // { debug, info, warn, error }(msg, scalarMeta)
-  instanceId: process.env.HOSTNAME,          // stable per replica when several share a store
+  instanceId: process.env.HOSTNAME,          // unique per replica; stable across restarts of the same one
 })
 
 // 1. Mount the ingest path in your HTTP framework. Give it the RAW body bytes.
@@ -67,7 +67,8 @@ never **sent**. The accepted result carries the store `id`. From there:
   Use it from a scheduler; overlapping runs are safe because claims are leased.
 - `flush()` loops cycles until nothing deliverable remains or the deadline passes, retrying
   as backoff timers expire. It returns immediately with `reason: 'paused'` if forwarding is
-  paused, and `reason: 'timeout'` with `retried > 0` if End Close stayed down. Flushing
+  paused, `reason: 'unroutable'` if due events belong to routes the provider no longer
+  returns, and `reason: 'timeout'` with `retried > 0` if End Close stayed down. Flushing
   cannot make an unavailable End Close accept records: with `memoryStore()` those events
   are lost when the process exits, with a durable store the next cycle picks them up.
 - `relay.on('settled', e => …)` fires per event with `{ id, routeId, result, error? }` where

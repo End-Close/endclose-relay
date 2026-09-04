@@ -1,9 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs'
-import type { Db } from '@endclose/relay-sqlite'
+import { KvRepo, type Db } from '@endclose/relay-sqlite'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { AuditRepo } from '../db/repo/audit.js'
 import { parseConfig, type LoadedConfig } from './load.js'
-import { envSecrets, hasAdapter, requireSecret, type SecretResolver } from '@endclose/relay'
+import { envSecrets, requireSecret, type SecretResolver } from '@endclose/relay'
 
 // The database is the source of truth for configuration: the latest config_versions row
 // IS the config. A relay.yaml file is only read once — to seed an empty database on
@@ -79,19 +79,21 @@ export function saveConfig(
   secrets: SecretResolver = envSecrets(),
 ): LoadedConfig {
   const loaded = parseConfig(yamlText)
-  for (const route of loaded.config.routes) {
-    if (!hasAdapter(route.source)) throw new Error(`route ${route.id}: unknown source "${route.source}"`)
-    requireSecret(secrets, route.auth.secret_env)
-  }
+  for (const route of loaded.config.routes) requireSecret(secrets, route.auth.secret_env)
 
   const routes = new RoutesRepo(db)
   const audit = new AuditRepo(db)
+  const kv = new KvRepo(db)
   const tx = db.transaction(() => {
     const last = db
       .prepare('SELECT config_hash FROM config_versions ORDER BY id DESC LIMIT 1')
       .get() as { config_hash: string } | undefined
     if (last?.config_hash === loaded.hash) return
     routes.upsertAll(loaded.config.routes)
+    // A pause belongs to a route; drop flags for routes no longer in the config so a
+    // later route with the same id does not come back silently paused.
+    const ids = new Set(loaded.config.routes.map((r) => r.id))
+    for (const paused of kv.pausedRoutes()) if (!ids.has(paused)) kv.setRoutePaused(paused, false)
     db.prepare(
       'INSERT INTO config_versions (applied_at, config_hash, config_yaml, applied_by) VALUES (?, ?, ?, ?)',
     ).run(new Date().toISOString(), loaded.hash, yamlText, appliedBy)

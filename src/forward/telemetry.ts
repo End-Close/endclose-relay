@@ -169,6 +169,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
   const kv = new KvRepo(db)
   const routes = new RoutesRepo(db)
   const stats = new Map(events.perRouteStats().map((s) => [s.route_id, s]))
+  const paused = kv.pausedRoutes()
   let dbBytes = 0
   try {
     dbBytes = statSync(dbPath).size
@@ -186,7 +187,7 @@ export function snapshotFromDb(db: Db, dbPath: string, startedAt: number, versio
       return {
         id: r.id,
         source: r.source,
-        paused: kv.isRoutePaused(r.id),
+        paused: paused.has(r.id),
         counts: s?.counts ?? {},
         last_delivered_at: s?.last_delivered_at ?? null,
         oldest_pending_at: s?.oldest_pending_at ?? null,

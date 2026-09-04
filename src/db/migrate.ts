@@ -1,4 +1,10 @@
-import { migrate as migrateStore, MIGRATIONS as STORE_MIGRATIONS, type Db, type Migration } from '@endclose/relay-sqlite'
+import {
+  migrate as migrateStore,
+  MIGRATIONS as STORE_MIGRATIONS,
+  ROUTE_PAUSED_PREFIX,
+  type Db,
+  type Migration,
+} from '@endclose/relay-sqlite'
 
 // Appliance-owned tables. `001_init.sql` (the store package's first migration) created
 // these too on databases from before the split; IF NOT EXISTS makes both paths converge.
@@ -37,7 +43,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     name: '003_route_pause_to_kv.sql',
     sql: `
 INSERT INTO kv (key, value, updated_at)
-  SELECT 'route_paused.' || id, '1', updated_at FROM routes WHERE paused = 1
+  SELECT '${ROUTE_PAUSED_PREFIX}' || id, '1', updated_at FROM routes WHERE paused = 1
   ON CONFLICT (key) DO NOTHING;
 `,
   },

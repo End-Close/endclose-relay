@@ -172,9 +172,9 @@ async function main(): Promise<void> {
   }
 
   const relay = createRelay({
-    routes: new DbRouteProvider(db),
-    store: new SqliteEventStore(db),
-    control: new SqliteControlStore(db),
+    routes: new DbRouteProvider(db, log),
+    store: new SqliteEventStore(db, { logger: log }),
+    control: new SqliteControlStore(db, { logger: log }),
     secrets: secretResolver,
     endclose: { apiKey, baseUrl: settings.endcloseBaseUrl },
     client,
@@ -187,14 +187,14 @@ async function main(): Promise<void> {
       backoffCapMs: settings.dispatch.backoff_cap_ms,
       parkAfterMs: settings.dispatch.park_after_ms,
       leaseMs: settings.dispatch.lease_ms,
+      recoverIntervalMs: settings.dispatch.recover_interval_ms,
     },
     retention: {
       deliveredDays: settings.retention.delivered_days,
       ledgerDays: settings.retention.ledger_days,
     },
     logger: log,
-    // The appliance is single-instance by design: a stable owner reclaims its own leases on restart.
-    instanceId: 'appliance',
+    instanceId: settings.instanceId,
     hooks,
   })
   relay.start()

@@ -2,6 +2,9 @@ import type { Db } from '../db.js'
 
 export type GlobalKillswitch = 'none' | 'pause' | 'panic'
 
+/** kv key prefix for per-route pause flags: `route_paused.<routeId>` = '1'. */
+export const ROUTE_PAUSED_PREFIX = 'route_paused.'
+
 export class KvRepo {
   constructor(private db: Db) {}
 
@@ -35,11 +38,19 @@ export class KvRepo {
   }
 
   isRoutePaused(routeId: string): boolean {
-    return this.get(`route_paused.${routeId}`) === '1'
+    return this.get(ROUTE_PAUSED_PREFIX + routeId) === '1'
   }
 
   setRoutePaused(routeId: string, paused: boolean): void {
-    if (paused) this.set(`route_paused.${routeId}`, '1')
-    else this.delete(`route_paused.${routeId}`)
+    if (paused) this.set(ROUTE_PAUSED_PREFIX + routeId, '1')
+    else this.delete(ROUTE_PAUSED_PREFIX + routeId)
+  }
+
+  /** Every paused route id in one query. */
+  pausedRoutes(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT key FROM kv WHERE key LIKE ? AND value = '1'`)
+      .all(ROUTE_PAUSED_PREFIX + '%') as { key: string }[]
+    return new Set(rows.map((r) => r.key.slice(ROUTE_PAUSED_PREFIX.length)))
   }
 }
