@@ -92,5 +92,7 @@ jobs:
       - run: pnpm build:packages
       # Publishes core first (topological order) and skips versions already in the registry, so
       # re-running this job after a partial failure is safe. --no-git-checks: a tag checkout is a
-      # detached HEAD, which pnpm's branch check would otherwise reject.
+      # detached HEAD, which pnpm's branch check would otherwise reject. --provenance is only
+      # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
+      # --provenance=false instead (the manifests deliberately do not force provenance).
       - run: pnpm publish -r --filter './packages/**' --access public --provenance --no-git-checks
