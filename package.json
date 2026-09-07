@@ -1,6 +1,6 @@
 {
   "name": "endclose-relay",
-  "version": "0.11.0",
+  "version": "0.12.2",
   "description": "Self-hosted webhook relay for End Close: the application (apps/relay) and the embeddable engine it is built on (packages/*). This manifest carries the product version the release workflow bumps.",
   "license": "UNLICENSED",
   "private": true,
@@ -16,16 +16,16 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "pnpm build:packages && pnpm --filter @endclose/relay-app dev",
-    "dev:all": "pnpm build:packages && pnpm --filter @endclose/relay-app dev:all",
-    "dev:ui": "pnpm --filter @endclose/relay-app dev:ui",
-    "build": "pnpm build:packages && pnpm --filter @endclose/relay-app build",
+    "dev": "pnpm build:packages && pnpm --filter @end-close/relay-app dev",
+    "dev:all": "pnpm build:packages && pnpm --filter @end-close/relay-app dev:all",
+    "dev:ui": "pnpm --filter @end-close/relay-app dev:ui",
+    "build": "pnpm build:packages && pnpm --filter @end-close/relay-app build",
     "build:packages": "pnpm -r --filter './packages/**' run build",
-    "start": "pnpm --filter @endclose/relay-app start",
-    "relayctl": "pnpm --filter @endclose/relay-app relayctl",
+    "start": "pnpm --filter @end-close/relay-app start",
+    "relayctl": "pnpm --filter @end-close/relay-app relayctl",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm build:packages && pnpm --filter @endclose/relay-app typecheck && pnpm --filter @endclose/relay-examples typecheck"
+    "typecheck": "pnpm build:packages && pnpm --filter @end-close/relay-app typecheck && pnpm --filter @end-close/relay-examples typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

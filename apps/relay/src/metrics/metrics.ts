@@ -1,5 +1,5 @@
 import { Counter, Gauge, Histogram, Registry } from 'prom-client'
-import type { ForwardResult, IngestOutcome, Killswitch as GlobalKillswitch, RelayHooks } from '@endclose/relay'
+import type { ForwardResult, IngestOutcome, Killswitch as GlobalKillswitch, RelayHooks } from '@end-close/relay'
 
 export type IngestResult = IngestOutcome
 export type { ForwardResult }

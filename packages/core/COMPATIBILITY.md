@@ -23,7 +23,7 @@ Within a major version the following are stable and change only additively:
   `"relay-" + sha256("<data_stream_key>:<external_id>\n" per record)[0:40]`; bulk POSTs use
   `on_conflict: "skip"`.
 - **`EventStore` / `EventStoreAdmin` / `ControlStore` / `RouteProvider`** interfaces and the
-  behavioural contract in `@endclose/relay-store-contract`. New optional methods may be added;
+  behavioural contract in `@end-close/relay-store-contract`. New optional methods may be added;
   required methods are not. A store signals lock contention or loss of connection by throwing
   `StoreUnavailableError` (ingest answers 503); any other `StoreError` answers 500.
 - **Configuration from End Close**: `routes` omitted from `createRelay()` means fetch from
@@ -36,5 +36,8 @@ Within a major version the following are stable and change only additively:
 
 Not covered: the internal `Dispatcher` class, package file layout, log message text.
 
-The packages are unpublished and carry version `0.0.0`; the product version is the
-workspace root's. Semantic versions are assigned at first publish.
+`@end-close/relay`, `@end-close/relay-sqlite` and `@end-close/relay-store-contract` are published
+to npm in lockstep with the relay application: every release tags one version, and all three
+packages carry it. Install them at the same version. The release PR stamps the product
+version into each package manifest (`0.0.0` only ever means "not yet released"). While the
+major is `0`, a minor bump may carry breaking changes; patch releases are additive.

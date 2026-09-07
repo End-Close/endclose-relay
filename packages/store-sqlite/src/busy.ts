@@ -1,4 +1,4 @@
-import { noopLogger, type Logger } from '@endclose/relay'
+import { noopLogger, type Logger } from '@end-close/relay'
 
 export const SQLITE_BUSY_TIMEOUT_MS = 15_000
 export const BUSY_RETRY_ATTEMPTS = 3

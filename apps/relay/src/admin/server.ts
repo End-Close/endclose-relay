@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EventsRepo, KvRepo, type Db, type GlobalKillswitch } from '@endclose/relay-sqlite'
+import { EventsRepo, KvRepo, type Db, type GlobalKillswitch } from '@end-close/relay-sqlite'
 import {
   decrypt,
   envSecrets,
@@ -15,7 +15,7 @@ import {
   type EventStatus,
   type Json,
   type SecretResolver,
-} from '@endclose/relay'
+} from '@end-close/relay'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { AuditRepo } from '../db/repo/audit.js'
 import { parseConfig } from '../config/load.js'

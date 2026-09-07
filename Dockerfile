@@ -13,7 +13,7 @@ COPY apps/relay ./apps/relay
 RUN pnpm build
 # A self-contained production tree for the application: its dist, its dependencies, and
 # the built workspace packages copied in as real modules.
-RUN pnpm --filter @endclose/relay-app deploy --legacy --prod /out/app
+RUN pnpm --filter @end-close/relay-app deploy --legacy --prod /out/app
 
 FROM node:22-slim
 # vim-tiny (~2 MB) provides `vi` for `relayctl config edit`. The base image ships no

@@ -1,12 +1,37 @@
 name: Release
 
-# Tag vX.Y.Z → test → build+push the multi-arch image to ghcr.io.
+# Tag vX.Y.Z → gate (tag matches every manifest) → test → in parallel:
+#   - build+push the multi-arch image to ghcr.io
+#   - publish @end-close/relay, @end-close/relay-sqlite, @end-close/relay-store-contract to npm
 on:
   push:
     tags: ['v*']
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag must match the root manifest, every package manifest, and the quick-start compose image
+        run: |
+          WANT=${GITHUB_REF_NAME#v}
+          for f in package.json packages/*/package.json; do
+            HAVE=$(node -p "require('./$f').version")
+            if [ "$HAVE" != "$WANT" ]; then
+              echo "$f is $HAVE, but tag $GITHUB_REF_NAME wants $WANT — run prepare-release, do not tag by hand" >&2
+              exit 1
+            fi
+          done
+          # The quick-start compose pins the GHCR image; a stale pin ships silent drift.
+          if ! grep -q "ghcr.io/end-close/relay:$GITHUB_REF_NAME" docker-compose.yaml; then
+            echo "docker-compose.yaml image ref is not ghcr.io/end-close/relay:$GITHUB_REF_NAME — bump it with the version" >&2
+            exit 1
+          fi
+
   test:
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,6 +45,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: scripts/verify-packs.sh
 
   release:
     needs: test
@@ -29,18 +55,6 @@ jobs:
       packages: write # push to ghcr.io with the built-in GITHUB_TOKEN
     steps:
       - uses: actions/checkout@v5
-      - name: Tag must match package.json and the quick-start compose image
-        run: |
-          PKG=$(node -p "require('./package.json').version")
-          if [ "v$PKG" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME does not match package.json v$PKG" >&2
-            exit 1
-          fi
-          # The quick-start compose pins the GHCR image; a stale pin ships silent drift.
-          if ! grep -q "ghcr.io/end-close/relay:$GITHUB_REF_NAME" docker-compose.yaml; then
-            echo "docker-compose.yaml image ref is not ghcr.io/end-close/relay:$GITHUB_REF_NAME — bump it with the version" >&2
-            exit 1
-          fi
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -56,3 +70,54 @@ jobs:
           tags: |
             ghcr.io/end-close/relay:${{ github.ref_name }}
             ghcr.io/end-close/relay:latest
+
+  publish-npm:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance attestations; no NPM_TOKEN
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      # No `registry-url` here on purpose: it writes an `_authToken=${NODE_AUTH_TOKEN}` line
+      # into .npmrc, and an empty token gets in the way of the OIDC exchange.
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+      # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10. pnpm hands the actual
+      # upload to the npm binary on PATH. Install the newer npm into its own prefix: letting
+      # npm 10 overwrite itself in place fails half-way ("Cannot find module 'promise-retry'").
+      - name: Install npm >= 11.5.1 alongside the bundled one
+        run: |
+          npm install -g --prefix "$RUNNER_TEMP/npm11" npm@latest
+          echo "$RUNNER_TEMP/npm11/bin" >> "$GITHUB_PATH"
+      - run: |
+          which npm && npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      # npm swallows a failed OIDC token exchange and reports a bare ENEEDAUTH. Print the
+      # identity claims GitHub mints for this job so a mismatch with the trusted-publisher
+      # settings on npmjs.com (owner, repository, workflow filename, environment — all
+      # case-sensitive) is visible in the log. Only the claims are printed, never the token.
+      - name: Show the OIDC identity npm will present
+        run: |
+          TOKEN=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" \
+            | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
+          node -e '
+            const claims = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url").toString())
+            for (const k of ["sub", "repository", "repository_owner", "repository_visibility", "job_workflow_ref", "workflow_ref", "ref", "environment", "aud"])
+              console.log(`${k}: ${claims[k] ?? "(absent)"}`)
+          ' "$TOKEN"
+      # Publishes core first (topological order) and skips versions already in the registry, so
+      # re-running this job after a partial failure is safe. --no-git-checks: a tag checkout is a
+      # detached HEAD, which pnpm's branch check would otherwise reject. --provenance is only
+      # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
+      # --provenance=false instead (the manifests deliberately do not force provenance).
+      # On failure, run once more at verbose level: that is where npm explains why the OIDC
+      # exchange was refused. The retry is safe because pnpm skips already-published versions.
+      - run: |
+          PUBLISH="pnpm publish -r --filter ./packages/** --access public --provenance --no-git-checks"
+          $PUBLISH || { echo "::group::verbose retry (look for 'oidc' lines)"; npm_config_loglevel=verbose $PUBLISH; }

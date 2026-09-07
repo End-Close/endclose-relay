@@ -1,4 +1,4 @@
-// @endclose/relay — the embeddable store-and-forward engine behind the End Close relay.
+// @end-close/relay — the embeddable store-and-forward engine behind the End Close relay.
 
 export { createRelay, parseRoutes, assertKnownSources, assertKnownEnrichments, routeEnrichments } from './engine/relay.js'
 export type { Relay, RelayOptions, DispatchOnceResult, FlushResult } from './engine/relay.js'

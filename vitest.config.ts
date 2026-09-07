@@ -8,9 +8,9 @@ const pkg = (p: string) => fileURLToPath(new URL(`./packages/${p}/src/index.ts`,
 export default defineConfig({
   resolve: {
     alias: {
-      '@endclose/relay-store-contract': pkg('store-contract'),
-      '@endclose/relay-sqlite': pkg('store-sqlite'),
-      '@endclose/relay': pkg('core'),
+      '@end-close/relay-store-contract': pkg('store-contract'),
+      '@end-close/relay-sqlite': pkg('store-sqlite'),
+      '@end-close/relay': pkg('core'),
     },
   },
   test: {

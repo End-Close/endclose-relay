@@ -5,8 +5,8 @@ import {
   type EndCloseClient,
   type RemoteConfig,
   type SecretResolver,
-} from '@endclose/relay'
-import type { Db } from '@endclose/relay-sqlite'
+} from '@end-close/relay'
+import type { Db } from '@end-close/relay-sqlite'
 import type { LoadedConfig } from './load.js'
 import { readActiveConfigRaw, saveConfig } from './store.js'
 

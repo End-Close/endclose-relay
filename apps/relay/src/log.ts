@@ -1,5 +1,5 @@
 import { pino } from 'pino'
-import type { Logger } from '@endclose/relay'
+import type { Logger } from '@end-close/relay'
 
 const base = pino({
   level: process.env.LOG_LEVEL ?? 'info',

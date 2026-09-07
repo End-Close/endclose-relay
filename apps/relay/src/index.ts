@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs'
-import { openDb, SqliteControlStore, SqliteEventStore, EventsRepo, KvRepo, type Db } from '@endclose/relay-sqlite'
-import { createRelay, deriveKey, EndCloseClient, envSecrets, RelayHooks } from '@endclose/relay'
+import { openDb, SqliteControlStore, SqliteEventStore, EventsRepo, KvRepo, type Db } from '@end-close/relay-sqlite'
+import { createRelay, deriveKey, EndCloseClient, envSecrets, RelayHooks } from '@end-close/relay'
 import { migrate } from './db/migrate.js'
 import { DbRouteProvider } from './db/route-provider.js'
 import { resolveActiveConfig, readActiveConfigRaw, type ActiveConfigState } from './config/store.js'

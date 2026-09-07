@@ -7,7 +7,7 @@ import {
   SqliteControlStore,
   SqliteEventStore,
   type Db,
-} from '@endclose/relay-sqlite'
+} from '@end-close/relay-sqlite'
 import {
   createRelay,
   DEFAULT_DISPATCH,
@@ -15,7 +15,7 @@ import {
   RelayHooks,
   type DispatchSettings,
   type Relay,
-} from '@endclose/relay'
+} from '@end-close/relay'
 import { migrate } from '../src/db/migrate.js'
 import { DbRouteProvider } from '../src/db/route-provider.js'
 import { parseConfig } from '../src/config/load.js'
