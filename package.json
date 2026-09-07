@@ -1,6 +1,6 @@
 {
   "name": "endclose-relay",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Self-hosted webhook relay for End Close: the application (apps/relay) and the embeddable engine it is built on (packages/*). This manifest carries the product version the release workflow bumps.",
   "license": "UNLICENSED",
   "private": true,
