@@ -113,7 +113,14 @@ customer_email:
 
 Transforms: `trim`, `lowercase` (strings; elementwise over wildcard arrays), `hash`
 (keyed HMAC-SHA256 under `MASKING_HMAC_KEY` — deterministic, so End Close can match
-values it never sees raw; the key never leaves the application).
+values it never sees raw; the key never leaves the application). A field object accepts
+only `source` and `transform` (plus `enrich`, below); any other key is a validation error.
+
+**`enrich` (library embeddings only):** a `description` or `metadata` field may add
+`enrich: <name>` to have a function registered by the embedding host compute the value
+from the source (`resident_name: { source: PayorId, enrich: resident_name }`). The
+application registers no such functions, so it rejects any config that uses `enrich:` —
+see `packages/core/README.md` if you embed the engine in your own backend.
 
 **Hard denylist (not configurable):** Luhn-valid PANs and SSN patterns inside mapped
 string values are redacted, and validation rejects mapping sensitive-named fields (cvv,

@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { relayConfigSchema, type RelayConfig, type RouteConfig } from '../config/schema.js'
+import { refEnrichment, relayConfigSchema, type RelayConfig, type RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
 import { EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
+import type { Enrichment } from '../forward/enrich.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
 import { hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
@@ -53,6 +54,14 @@ export interface RelayOptions {
   logger?: Logger | null
   /** Additional processor adapters keyed by route `source`. */
   adapters?: Record<string, ProcessorAdapter>
+  /**
+   * Host functions a route's map may name with `enrich: <name>` on `description` or a
+   * `metadata` entry. Each runs in-process per event after mapping, receives the value at
+   * that field's `source`, and returns what is forwarded (validated like any mapped value).
+   * Throw to retry the event with backoff; throw `EnrichmentError` to park it; return
+   * `undefined` to omit the field. Bounded by `dispatch.enrichTimeoutMs` per call.
+   */
+  enrichments?: Record<string, Enrichment>
   /** Lease owner for claimed batches. Give each long-lived replica a stable id. */
   instanceId?: string
   hooks?: RelayHooks
@@ -89,7 +98,10 @@ export interface Relay {
   flush(opts?: { timeoutMs?: number }): Promise<FlushResult>
   /** Run retention pruning to completion. */
   prune(): Promise<{ wiped: number; deleted: number }>
-  /** Map a sample payload through a route without storing or sending anything. */
+  /**
+   * Map a sample payload through a route without storing or sending anything. Enrichments
+   * are not run: their fields are listed in `report.enriched` and `pending`.
+   */
   preview(route: RouteConfig, sample: Json, receivedAt?: string): MappedEvent
   /** Decode a buffered payload. Sensitive: the caller is responsible for auditing. */
   readPayload(id: string): Promise<Buffer | undefined>
@@ -116,14 +128,41 @@ export function assertKnownSources(
   }
 }
 
+/** Every `enrich:` reference in a route's map, as [field, enrichment name]. */
+export function routeEnrichments(route: RouteConfig): [field: string, enrichment: string][] {
+  const out: [string, string][] = []
+  const desc = route.map.description === undefined ? undefined : refEnrichment(route.map.description)
+  if (desc !== undefined) out.push(['description', desc])
+  for (const [key, ref] of Object.entries(route.map.metadata)) {
+    const name = refEnrichment(ref)
+    if (name !== undefined) out.push([`metadata.${key}`, name])
+  }
+  return out
+}
+
+/** Reject routes whose map names an enrichment the host has not registered. */
+export function assertKnownEnrichments(
+  routes: RouteConfig[],
+  enrichments?: Record<string, unknown>,
+): void {
+  for (const r of routes) {
+    for (const [field, name] of routeEnrichments(r)) {
+      if (!enrichments || !Object.hasOwn(enrichments, name)) {
+        throw new Error(`route ${r.id}: ${field} references unknown enrichment "${name}"`)
+      }
+    }
+  }
+}
+
 /**
  * Validate a routes document (parsed YAML or a plain object) into RouteConfig[]. Applies
- * defaults, the hard-denylist check on metadata names, duplicate-id and unknown-source
- * checks. Pass the host's extra adapters so their sources validate too.
+ * defaults, the hard-denylist check on metadata names, duplicate-id, unknown-source and
+ * unknown-enrichment checks. Pass the host's extra adapters and enrichments so routes
+ * that use them validate too; with none registered, any `enrich:` reference is rejected.
  */
 export function parseRoutes(
   doc: unknown,
-  opts: { adapters?: Record<string, ProcessorAdapter> } = {},
+  opts: { adapters?: Record<string, ProcessorAdapter>; enrichments?: Record<string, unknown> } = {},
 ): RouteConfig[] {
   const config: RelayConfig = relayConfigSchema.parse(doc)
   const seen = new Set<string>()
@@ -132,6 +171,7 @@ export function parseRoutes(
     seen.add(route.id)
   }
   assertKnownSources(config.routes, opts.adapters)
+  assertKnownEnrichments(config.routes, opts.enrichments)
   return config.routes
 }
 
@@ -141,7 +181,10 @@ const FLUSH_POLL_MAX_MS = 1000
 const FAR_FUTURE = '9999-12-31T23:59:59.999Z'
 
 export function createRelay(opts: RelayOptions): Relay {
-  if (Array.isArray(opts.routes)) assertKnownSources(opts.routes, opts.adapters)
+  if (Array.isArray(opts.routes)) {
+    assertKnownSources(opts.routes, opts.adapters)
+    assertKnownEnrichments(opts.routes, opts.enrichments)
+  }
   const routes = Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes
   const control = opts.control ?? new MemoryControlStore()
   const secrets = toSecretResolver(opts.secrets)
@@ -187,6 +230,7 @@ export function createRelay(opts: RelayOptions): Relay {
     signal,
     hooks,
     logger,
+    ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
   })
 
   const dispatchOnce = async (o: { prune?: boolean } = {}): Promise<DispatchOnceResult> => {

@@ -45,6 +45,13 @@ application is built from (`@end-close/relay`, `packages/core/src/mask/defaults.
 library lives in this repository and the image is built from the same reviewed checkout,
 so the version you audit is the version that runs.
 
+*If you embed the engine as a library* (`@end-close/relay`) rather than running this
+application, a map field may also name an **enrichment**: a function in your own code that
+computes that field's value (for example a resident's name looked up from a payer id in your
+database). The map still names every forwarded field, the same denylist applies to what
+your function returns, and the engine makes no outbound call on its behalf. The application
+registers no enrichments and rejects a config that uses them.
+
 **Verify it yourself:** the admin UI's config tab has a **map preview**: paste a sample
 payload and see the exact record that would be sent, the source of every field, and
 every payload field that is *not* forwarded. It runs locally and sends nothing. Your

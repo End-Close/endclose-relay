@@ -183,6 +183,13 @@ describe('admin API', () => {
       expect(typo.valid).toBe(false)
       expect(typo.error).toMatch(/no adapter for source "payabli_"/)
 
+      // `enrich:` is a library feature; the application registers no enrichments.
+      const enriched = (await post('/config/validate', {
+        yaml: TEST_CONFIG_YAML.replace('paypoint: Paypoint\n', 'paypoint: Paypoint\n        resident: { source: batchId, enrich: resident }\n'),
+      })).json()
+      expect(enriched.valid).toBe(false)
+      expect(enriched.error).toMatch(/metadata.resident references unknown enrichment "resident"/)
+
       const good = (await post('/config/validate', { yaml: (await get('/config')).json().yaml })).json()
       expect(good.valid).toBe(true)
       expect(good.routes).toEqual(['payabli-settlements', 'payabli-batches'])

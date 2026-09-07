@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { mapEvent, parseDate, toCents, MappingError } from '../src/index.js'
-import { FIXTURES, MASKING_KEY, testConfig } from './helpers.js'
+import { parse } from 'yaml'
+import { mapEvent, parseDate, parseRoutes, routeSchema, toCents, MappingError } from '../src/index.js'
+import { FIXTURES, MASKING_KEY, TRANSACTION_ROUTES_YAML, testConfig } from './helpers.js'
 import type { Json } from '../src/index.js'
 
 const settlement = JSON.parse(
@@ -10,6 +11,9 @@ const settlement = JSON.parse(
 ) as Json
 const batchPaid = JSON.parse(
   readFileSync(join(FIXTURES, 'payabli-batch-paid.json'), 'utf8'),
+) as Json
+const transaction = JSON.parse(
+  readFileSync(join(FIXTURES, 'payabli-transaction.json'), 'utf8'),
 ) as Json
 
 describe('toCents', () => {
@@ -92,5 +96,64 @@ describe('mapEvent', () => {
     expect(() =>
       mapEvent(settlementsRoute, { Event: 'TransferFunded' }, '2026-07-03T00:00:00Z', MASKING_KEY),
     ).toThrow(MappingError)
+  })
+})
+
+describe('enriched fields', () => {
+  const enrichments = { resident_name: () => 'never called by mapEvent' }
+  const txnRoute = parseRoutes(parse(TRANSACTION_ROUTES_YAML), { enrichments })[0]!
+  const baseMap = { data_stream_key: 'k', external_id: 'TransactionId', amount: 'NetAmount', direction: 'credit' as const }
+  const routeWith = (map: Record<string, unknown>) =>
+    routeSchema.parse({ id: 'x', source: 'payabli', auth: { mode: 'static_header', secret_env: 'S' }, map: { ...baseMap, ...map } })
+
+  it('mapEvent leaves enriched fields to the host and reports them as pending', () => {
+    const { record, report, pending } = mapEvent(txnRoute, transaction, '2026-07-05T09:15:00Z', MASKING_KEY)
+    expect(record).toMatchObject({ external_id: 'txn_0a1b2c3d', amount: 12500, date: '2026-07-05' })
+    expect(record.metadata).toEqual({ paypoint: 'Acme Field Services' })
+    expect(pending).toEqual([
+      { field: 'metadata.resident_name', enrichment: 'resident_name', input: 'payor_4471', source: 'PayorId' },
+    ])
+    expect(report.enriched).toEqual(['metadata.resident_name'])
+    expect(report.mapped['metadata.resident_name']).toBe('PayorId → enrich:resident_name')
+    // The lookup key was used, so it is not "kept local".
+    expect(report.not_forwarded).not.toContain('PayorId')
+    expect(report.not_forwarded).toContain('ContactUs')
+  })
+
+  it('applies transforms before handing the input over, and skips absent sources', () => {
+    const route = routeWith({
+      description: { source: 'PayorId', transform: ['trim', 'lowercase'], enrich: 'summary' },
+      metadata: { unit: { source: 'Missing', enrich: 'unit' } },
+    })
+    const { record, pending, report } = mapEvent(route, { ...(transaction as object), PayorId: '  PAYOR_1 ' } as Json, '2026-07-05T00:00:00Z', MASKING_KEY)
+    expect(pending).toEqual([{ field: 'description', enrichment: 'summary', input: 'payor_1', source: 'PayorId' }])
+    expect(record.description).toBeUndefined()
+    expect(record.metadata).toEqual({})
+    expect(report.enriched).toEqual(['description'])
+  })
+
+  it('the schema allows enrich only on description and metadata', () => {
+    expect(() => routeWith({ external_id: { source: 'TransactionId', enrich: 'e' } })).toThrow()
+    expect(() => routeWith({ amount: { source: 'NetAmount', enrich: 'e' } })).toThrow()
+    expect(() => routeWith({ metadata: { r: { source: 'PayorId', enrich: 'Not-Snake' } } })).toThrow(/snake_case/)
+    expect(routeWith({ description: { source: 'PayorId', enrich: 'e' } }).map.description).toEqual({ source: 'PayorId', enrich: 'e' })
+  })
+
+  it('a sensitive output name stays forbidden for enriched fields even with hash', () => {
+    // hash protects a forwarded source value...
+    expect(() => routeWith({ metadata: { ssn: { source: 'X', transform: 'hash' } } })).not.toThrow()
+    // ...but not an enriched output, which forwards whatever the host returns.
+    expect(() => routeWith({ metadata: { ssn: { source: 'X', transform: 'hash', enrich: 'e' } } })).toThrow(
+      /an enriched field cannot use it as an output name/,
+    )
+    expect(() => routeWith({ metadata: { ssn: { source: 'X', enrich: 'e' } } })).toThrow(/hard denylist/)
+  })
+
+  it('parseRoutes rejects enrichments the host has not registered', () => {
+    expect(() => parseRoutes(parse(TRANSACTION_ROUTES_YAML))).toThrow(
+      /route payabli-transactions: metadata.resident_name references unknown enrichment "resident_name"/,
+    )
+    expect(() => parseRoutes(parse(TRANSACTION_ROUTES_YAML), { enrichments: { other: () => 1 } })).toThrow(/unknown enrichment/)
+    expect(parseRoutes(parse(TRANSACTION_ROUTES_YAML), { enrichments })).toHaveLength(1)
   })
 })

@@ -48,6 +48,30 @@ routes:
         paypoint: Paypoint
 `
 
+// A transaction-level Payabli route whose resident_name comes from a host enrichment.
+// Kept out of TEST_CONFIG_YAML so the application's tests (which register no
+// enrichments) keep parsing it unchanged. Field names are placeholders until the
+// customer's sample payload lands.
+export const TRANSACTION_ROUTES_YAML = `
+routes:
+  - id: payabli-transactions
+    source: payabli
+    auth:
+      mode: static_header
+      header: authorization
+      secret_env: PAYABLI_WEBHOOK_SECRET
+    events: ["ApprovedPayment"]
+    map:
+      data_stream_key: payabli_transactions
+      external_id: TransactionId
+      amount: NetAmount
+      direction: credit
+      date: { source: TransactionTime, format: mdy_hms }
+      metadata:
+        paypoint: Paypoint
+        resident_name: { source: PayorId, enrich: resident_name }
+`
+
 export function testConfig() {
   return { routes: parseRoutes(parse(TEST_CONFIG_YAML)) }
 }

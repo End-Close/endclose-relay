@@ -1,0 +1,13 @@
+{
+  "Event": "ApprovedPayment",
+  "Paypoint": "Acme Field Services",
+  "Text": "Payment txn_0a1b2c3d approved.",
+  "TransactionId": "txn_0a1b2c3d",
+  "PayorId": "payor_4471",
+  "NetAmount": "125.00",
+  "TotalAmount": "128.75",
+  "TransactionTime": "7/5/2026 09:12:44",
+  "Method": "card",
+  "ContactUs": "Contact us at support@payabli.com",
+  "entryPoint": "acme-main"
+}
