@@ -108,7 +108,7 @@ jobs:
             | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
           node -e '
             const claims = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url").toString())
-            for (const k of ["repository", "repository_owner", "job_workflow_ref", "workflow_ref", "ref", "environment", "aud"])
+            for (const k of ["sub", "repository", "repository_owner", "repository_visibility", "job_workflow_ref", "workflow_ref", "ref", "environment", "aud"])
               console.log(`${k}: ${claims[k] ?? "(absent)"}`)
           ' "$TOKEN"
       # Publishes core first (topological order) and skips versions already in the registry, so
