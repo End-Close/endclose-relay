@@ -5,6 +5,11 @@
 # volume, versioned) and is managed in the admin UI at :8081 — where you can also
 # export the active config back to YAML at any time.
 #
+# The file is optional: with no seed file, an empty application fetches the routes
+# document End Close holds for its API key instead (the key is environment-scoped, so it
+# alone selects the environment), stores it as version 1, and never re-fetches. Set
+# RELAY_REMOTE_CONFIG=off to require a local seed. See docs/CONFIG.md → Lifecycle.
+#
 # Secrets are never written in this file — every secret is referenced by the name of an
 # environment variable, provided to the relay container however you manage secrets
 # (secret-manager env injection, an optional .env next to docker-compose.yaml, …).

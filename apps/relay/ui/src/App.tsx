@@ -322,6 +322,24 @@ export default function App() {
             itself into running mode. <strong>No webhooks are accepted until then.</strong>
           </p>
         )}
+        {status.remote_config?.state === 'failed' && (
+          <p className="env-warning">
+            <strong>
+              {status.remote_config.retrying
+                ? 'Fetching the configuration from End Close failed'
+                : 'The configuration fetched from End Close could not be applied'}
+            </strong>{' '}
+            — {status.remote_config.error}.{' '}
+            {status.remote_config.retrying
+              ? 'The relay keeps retrying every minute and restarts itself when it succeeds; or configure it manually below.'
+              : 'Fix the cause (usually a secret env var named by the configuration) and recreate the container, or configure it manually below.'}
+          </p>
+        )}
+        {status.remote_config?.state === 'none' && (
+          <p className="text-dim">
+            End Close holds no configuration for this API key yet; configure the relay below.
+          </p>
+        )}
         {status.secret_envs.some((s) => !s.set) && (
           <p className="text-dim">
             note: unset secrets ({status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')})

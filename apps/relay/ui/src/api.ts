@@ -19,6 +19,8 @@ export interface Status {
   config_hash: string | null
   config_applied_at: string | null
   config_error: string | null
+  /** Bootstrap mode: why the configuration was not fetched from End Close. */
+  remote_config: { state: 'none' | 'disabled' | 'failed'; error?: string; retrying: boolean } | null
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]

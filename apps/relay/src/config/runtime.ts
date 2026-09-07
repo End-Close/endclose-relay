@@ -21,6 +21,8 @@ export interface RuntimeSettings {
   dispatch: DispatchSettings
   retention: RetentionSettings
   telemetry: { enabled: boolean }
+  /** Fetch the initial configuration from End Close when none is stored or seeded. */
+  remoteConfig: { enabled: boolean }
 }
 
 function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -64,11 +66,25 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       ledgerDays: int(env, 'RELAY_RETENTION_LEDGER_DAYS', DEFAULT_RETENTION.ledgerDays),
     },
     telemetry: { enabled: isTelemetryEnabled(env) },
+    remoteConfig: { enabled: isRemoteConfigEnabled(env) },
   }
+}
+
+/**
+ * Default on. RELAY_REMOTE_CONFIG=off (or 0 / false) stops the application fetching its
+ * initial configuration from End Close when it has none; it boots into bootstrap mode
+ * instead. Has no effect once a configuration is stored.
+ */
+export function isRemoteConfigEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isOff(env.RELAY_REMOTE_CONFIG)
 }
 
 /** Default on. RELAY_TELEMETRY=off (or 0 / false) disables the operational call-home. */
 export function isTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.RELAY_TELEMETRY ?? '').trim().toLowerCase()
-  return raw !== 'off' && raw !== '0' && raw !== 'false'
+  return !isOff(env.RELAY_TELEMETRY)
+}
+
+function isOff(raw: string | undefined): boolean {
+  const v = (raw ?? '').trim().toLowerCase()
+  return v === 'off' || v === '0' || v === 'false'
 }

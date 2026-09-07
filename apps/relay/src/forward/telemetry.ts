@@ -56,6 +56,7 @@ export type TelemetryKind =
   | 'fatal_boot'
   | 'setup_missing_env'
   | 'config_invalid'
+  | 'remote_config'
   | 'dispatch_cycle'
   | 'ingest_persist'
   | 'prune'

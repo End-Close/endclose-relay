@@ -60,7 +60,8 @@ log and the version history.
 | Receive the mapped records you configured                      | ✅                                         |
 | See raw webhook payloads, unmapped fields, or hashed originals | ❌ no: End Close never receives them. Operators can decrypt a buffered payload **on the application** (admin UI / `relayctl events payload`) — audited locally, never transmitted |
 | Reach into the application (any inbound connection)              | ❌ all connections are outbound            |
-| Flip killswitches, change config, or execute anything remotely | ❌ admin plane is host-local, credentialed by you |
+| Flip killswitches, change a stored config, or execute anything remotely | ❌ admin plane is host-local, credentialed by you |
+| Supply the **initial** configuration                            | ✅ only if you provide none: with no stored config and no seed file the relay fetches the routes document End Close holds for your API key, stores it as version 1 (`applied_by: endclose`, audited, previewable in the UI like any version) and never re-fetches. Opt out with `RELAY_REMOTE_CONFIG=off` or by shipping a seed file |
 | See your processor credentials or the application's keys         | ❌ never transmitted or stored server-side |
 
 
@@ -90,9 +91,10 @@ else with 503. That page is intentionally unauthenticated: it exists precisely b
 the admin credential may be the thing that's missing, it appears only while the relay
 holds no data and accepts no webhooks, and it discloses nothing but env-var names.
 - **Bootstrap mode:** with env present but no configuration yet (fresh application, no
-seed file), the relay serves only the **authenticated** admin UI in a setup state where
-the initial configuration is entered; ingest is not listening and no webhooks are
-accepted, so there is still no data at risk. After the first apply the process restarts
+seed file, and End Close holding no configuration for the API key — or the fetch
+disabled with `RELAY_REMOTE_CONFIG=off`), the relay serves only the **authenticated**
+admin UI in a setup state where the initial configuration is entered; ingest is not
+listening and no webhooks are accepted, so there is still no data at risk. After the first apply the process restarts
 itself into normal operation. In both modes `GET /healthz` (unauthenticated liveness,
 disclosing only `{ ok, mode }`) reports healthy — deliberately, so an orchestrator's
 auto-restart never fights an operator mid-configuration.
@@ -158,9 +160,14 @@ secrets can live only on the host if that is your policy.
 The application database is the configuration's source of truth. Every applied config is
 an **immutable version row** — full YAML, SHA-256 hash, timestamp — and the history is
 retained and browsable in the UI. A `relay.yaml` file is read exactly once, to seed an
-empty application; after that no file, image update, or redeploy can alter configuration —
-only an authenticated admin request can, and each one appends a version and an audit
-entry. The active config is exportable as YAML at any time (for sign-off records, your
+empty application; with no file, the routes document End Close holds for your API key is
+fetched exactly once instead (`GET /relays/config`, same egress and key; disable with
+`RELAY_REMOTE_CONFIG=off`) and stored as version 1 attributed to `endclose`. After that
+no file, image update, redeploy, or End Close can alter configuration — only an
+authenticated admin request can, and each one appends a version and an audit entry.
+Review a fetched configuration the same way as one you wrote: the config tab shows it,
+the map preview shows what it forwards, and you can edit or replace it before any
+webhook is pointed at the relay. The active config is exportable as YAML at any time (for sign-off records, your
 git, or seeding a replacement application). Secrets are not part of configuration: the
 YAML references env-var names only, and the UI can neither display nor set secret
 values — rotating a credential means changing the container's environment through your
@@ -216,7 +223,9 @@ local inspection by authenticated operators — they never leave the application
 operational call-home (same `api.endclose.com` egress) sends queue gauges, the routes
 config, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin
-plane credentialed by you, read-only visibility limited to the records you send.
+plane credentialed by you, read-only visibility limited to the records you send. The
+one thing End Close can supply is the initial configuration, and only when you provide
+none — stored, audited and reviewable like any version, never changed remotely afterwards.
 - *Where does data live and for how long?* Encrypted SQLite on your volume; 7-day
 payload retention, 30-day ledger, parked events until you resolve them.
 - *How fast can we stop it?* One click in the admin UI (pause or panic); or revoke the

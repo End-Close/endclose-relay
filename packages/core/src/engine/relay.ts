@@ -1,11 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { relayConfigSchema, type RelayConfig, type RouteConfig } from '../config/schema.js'
+import type { RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
-import { EndCloseClient } from '../forward/endclose-client.js'
+import { ENDCLOSE_API_URL, EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
-import { hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
 import { noopLogger, type Logger } from '../logger.js'
@@ -13,6 +12,8 @@ import { sleep } from '../util/strings.js'
 import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
+import { remoteRoutes } from './remote-config.js'
+import { assertKnownSources } from './routes.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
 import {
   DEFAULT_DISPATCH,
@@ -34,8 +35,13 @@ import {
 // supplied by the host.
 
 export interface RelayOptions {
-  /** Route definitions: the same shape as the `routes` block of relay.yaml. */
-  routes: RouteConfig[] | RouteProvider
+  /**
+   * Route definitions: the same shape as the `routes` block of relay.yaml, or a live
+   * provider. Omit to fetch them from End Close with the API key — the key is
+   * environment-scoped, so it alone determines which environment's configuration the
+   * relay runs (see `remoteRoutes`).
+   */
+  routes?: RouteConfig[] | RouteProvider
   store: EventStore
   /** Killswitch and per-route pause state. Default: in-memory, nothing paused. */
   control?: ControlStore
@@ -58,6 +64,8 @@ export interface RelayOptions {
   hooks?: RelayHooks
   /** Supply a pre-built client (the application shares one with telemetry). */
   client?: EndCloseClient
+  /** Tuning for routes fetched from End Close (only used when `routes` is omitted). */
+  remoteConfig?: { refreshIntervalMs?: number }
 }
 
 export type DispatchOnceResult = DispatchCounts
@@ -96,6 +104,8 @@ export interface Relay {
   on<E extends RelayEventName>(name: E, handler: RelayHandler<E>): () => void
   readonly store: EventStore
   readonly control: ControlStore
+  /** Where routes are read from: static, the host's provider, or End Close when `routes` was omitted. */
+  readonly routes: RouteProvider
 }
 
 function toKey(name: string, v: string | Buffer): Buffer {
@@ -104,36 +114,7 @@ function toKey(name: string, v: string | Buffer): Buffer {
   return v
 }
 
-/** Reject routes whose `source` has no adapter (built-in or host-registered). */
-export function assertKnownSources(
-  routes: RouteConfig[],
-  adapters?: Record<string, ProcessorAdapter>,
-): void {
-  for (const r of routes) {
-    if (!hasAdapter(r.source, adapters)) {
-      throw new Error(`route ${r.id}: no adapter for source "${r.source}"`)
-    }
-  }
-}
-
-/**
- * Validate a routes document (parsed YAML or a plain object) into RouteConfig[]. Applies
- * defaults, the hard-denylist check on metadata names, duplicate-id and unknown-source
- * checks. Pass the host's extra adapters so their sources validate too.
- */
-export function parseRoutes(
-  doc: unknown,
-  opts: { adapters?: Record<string, ProcessorAdapter> } = {},
-): RouteConfig[] {
-  const config: RelayConfig = relayConfigSchema.parse(doc)
-  const seen = new Set<string>()
-  for (const route of config.routes) {
-    if (seen.has(route.id)) throw new Error(`duplicate route id: ${route.id}`)
-    seen.add(route.id)
-  }
-  assertKnownSources(config.routes, opts.adapters)
-  return config.routes
-}
+export { assertKnownSources, parseRoutes } from './routes.js'
 
 const FLUSH_POLL_MIN_MS = 50
 const FLUSH_POLL_MAX_MS = 1000
@@ -141,22 +122,33 @@ const FLUSH_POLL_MAX_MS = 1000
 const FAR_FUTURE = '9999-12-31T23:59:59.999Z'
 
 export function createRelay(opts: RelayOptions): Relay {
+  const logger = opts.logger ?? noopLogger
+  const client =
+    opts.client ??
+    new EndCloseClient(
+      opts.endclose.baseUrl ?? ENDCLOSE_API_URL,
+      opts.endclose.apiKey,
+      opts.endclose.fetch ?? fetch,
+    )
   if (Array.isArray(opts.routes)) assertKnownSources(opts.routes, opts.adapters)
-  const routes = Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes
+  const routes: RouteProvider =
+    opts.routes === undefined
+      ? remoteRoutes(client, {
+          logger,
+          ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          ...(opts.remoteConfig?.refreshIntervalMs !== undefined
+            ? { refreshIntervalMs: opts.remoteConfig.refreshIntervalMs }
+            : {}),
+        })
+      : Array.isArray(opts.routes)
+        ? staticRoutes(opts.routes)
+        : opts.routes
   const control = opts.control ?? new MemoryControlStore()
   const secrets = toSecretResolver(opts.secrets)
-  const logger = opts.logger ?? noopLogger
   const hooks = opts.hooks ?? new RelayHooks()
   const codec =
     opts.encryption === 'none' ? plainCodec : aesGcmCodec(toKey('dataKey', opts.encryption.dataKey))
   const maskingKey = toKey('maskingKey', opts.maskingKey)
-  const client =
-    opts.client ??
-    new EndCloseClient(
-      opts.endclose.baseUrl ?? 'https://api.endclose.com/v1',
-      opts.endclose.apiKey,
-      opts.endclose.fetch ?? fetch,
-    )
   const dispatch: DispatchSettings = { ...DEFAULT_DISPATCH, ...opts.dispatch }
   const retention = opts.retention === false ? null : { ...DEFAULT_RETENTION, ...opts.retention }
   const signal = new EventEmitter()
@@ -246,5 +238,6 @@ export function createRelay(opts: RelayOptions): Relay {
     on: (name, handler) => hooks.on(name, handler),
     store,
     control,
+    routes,
   }
 }

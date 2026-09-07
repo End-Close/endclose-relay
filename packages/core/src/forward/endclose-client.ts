@@ -37,6 +37,9 @@ export class PermanentHttpError extends Error {
 
 const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 504])
 
+/** End Close's public API. Override for staging via `endclose.baseUrl` / `ENDCLOSE_BASE_URL`. */
+export const ENDCLOSE_API_URL = 'https://api.endclose.com/v1'
+
 export class EndCloseClient {
   constructor(
     private baseUrl: string,
@@ -62,6 +65,15 @@ export class EndCloseClient {
     return this.request('GET', `/bulk_requests/${id}`, {}) as Promise<
       BulkRequestSummary & { results?: BulkResultItem[] }
     >
+  }
+
+  /**
+   * The routes document End Close holds for this API key's environment. The key is
+   * environment-scoped, so nothing else selects the environment. 404 = nothing
+   * provisioned. Returns the parsed JSON body; `fetchRemoteConfig` validates it.
+   */
+  async getRelayConfig(opts: { timeoutMs?: number } = {}): Promise<unknown> {
+    return this.request('GET', '/relays/config', { timeoutMs: opts.timeoutMs ?? 10_000 })
   }
 
   /** Operational call-home. Failures must never affect ingest or dispatch. */

@@ -30,6 +30,7 @@ import { isDbPathPersistent } from '../db/persistence.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
 import type { Telemetry } from '../forward/telemetry.js'
+import type { RemoteConfigStatus } from '../config/remote.js'
 
 // The admin plane is the single management surface (UI + API). Basic auth is mandatory;
 // mutations additionally reject cross-site browser requests. Attribution is
@@ -52,6 +53,11 @@ export interface AdminDeps {
   configError?: string
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
+  /**
+   * Bootstrap mode: why no configuration was fetched from End Close (read live, because
+   * a transient failure keeps being retried in the background).
+   */
+  remoteConfig?: () => RemoteConfigStatus | undefined
   telemetry?: Telemetry
   /** Requests per client per minute before 429 (default 300). */
   rateLimitMax?: number
@@ -144,6 +150,7 @@ export async function buildAdminServer(deps: AdminDeps): Promise<FastifyInstance
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,
       config_error: deps.configError ?? null,
+      remote_config: deps.remoteConfig?.() ?? null,
       killswitch: {
         global: kv.globalKillswitch(),
         routes_paused: allRoutes.filter((r) => paused.has(r.id)).map((r) => r.id),

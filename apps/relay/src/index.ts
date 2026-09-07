@@ -3,7 +3,8 @@ import { openDb, SqliteControlStore, SqliteEventStore, EventsRepo, KvRepo, type 
 import { createRelay, deriveKey, EndCloseClient, envSecrets, RelayHooks } from '@endclose/relay'
 import { migrate } from './db/migrate.js'
 import { DbRouteProvider } from './db/route-provider.js'
-import { resolveActiveConfig, readActiveConfigRaw } from './config/store.js'
+import { resolveActiveConfig, readActiveConfigRaw, type ActiveConfigState } from './config/store.js'
+import { seedFromEndClose, remoteStatusOf, type RemoteSeedResult } from './config/remote.js'
 import { loadRuntimeSettings, isTelemetryEnabled } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
 import { buildIngestServer } from './ingest/server.js'
@@ -17,6 +18,9 @@ import { VERSION } from './version.js'
 import { log } from './log.js'
 
 const DEFAULT_DB_PATH = '/var/lib/endclose-relay/relay.db'
+// Bootstrap mode after End Close could not be reached: keep trying, so a relay that came
+// up before its egress was ready configures itself without a manual restart.
+const REMOTE_SEED_RETRY_MS = 60_000
 
 function buildMetrics(db: Db, dbPath: string): Metrics {
   const events = new EventsRepo(db)
@@ -82,7 +86,7 @@ async function main(): Promise<void> {
   migrate(db)
 
   // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
-  const state = resolveActiveConfig(
+  let state: ActiveConfigState = resolveActiveConfig(
     db,
     process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml',
     secretResolver,
@@ -98,6 +102,33 @@ async function main(): Promise<void> {
     version: VERSION,
     startedAt,
   })
+
+  // Nothing stored and no seed file: End Close may hold the configuration for this API
+  // key (the key is environment-scoped, so it alone selects the environment). A fetched
+  // document is stored as the first version, attributed to "endclose"; after that the
+  // database is authoritative exactly as for a file seed.
+  const seedOpts = {
+    client,
+    apiKey,
+    baseUrl: settings.endcloseBaseUrl,
+    enabled: settings.remoteConfig.enabled,
+    secrets: secretResolver,
+  }
+  let remote: RemoteSeedResult | undefined
+  if (state.kind === 'empty') {
+    remote = await seedFromEndClose(db, seedOpts)
+    if (remote.kind === 'seeded') {
+      state = { kind: 'ok', loaded: remote.loaded }
+      log.info('configuration fetched from End Close', {
+        base_url: settings.endcloseBaseUrl,
+        environment: remote.environment ?? null,
+        config_hash: remote.loaded.hash,
+      })
+    } else {
+      logRemoteSeed(remote)
+      if (remote.kind === 'failed') telemetry.captureError('remote_config', new Error(remote.error))
+    }
+  }
 
   if (state.kind !== 'ok') {
     // Bootstrap mode: no config yet — or a stored config that fails validation (e.g.
@@ -119,6 +150,46 @@ async function main(): Promise<void> {
     }
     const metrics = buildMetrics(db, dbPath)
     let restarting = false
+    const restart = (why: string) => {
+      if (restarting) return
+      restarting = true
+      log.info(why)
+      setTimeout(() => process.exit(0), 500) // let the HTTP response flush
+    }
+    // A transient End Close failure keeps being retried; success restarts into running
+    // mode just like a first apply. An operator apply in the meantime wins (the retry
+    // finds a stored config and saves nothing).
+    let retryTimer: NodeJS.Timeout | undefined
+    const stopRetrying = () => {
+      if (retryTimer) clearInterval(retryTimer)
+      retryTimer = undefined
+    }
+    if (remote?.kind === 'failed' && remote.retryable) {
+      retryTimer = setInterval(() => {
+        if (restarting) return
+        void seedFromEndClose(db, seedOpts).then((again) => {
+          remote = again
+          if (again.kind === 'seeded') {
+            stopRetrying()
+            log.info('configuration fetched from End Close', {
+              environment: again.environment ?? null,
+              config_hash: again.loaded.hash,
+            })
+            restart('configuration fetched from End Close — restarting into running mode')
+          } else if (again.kind === 'superseded' || (again.kind === 'failed' && !again.retryable)) {
+            stopRetrying()
+            logRemoteSeed(again)
+          } else {
+            log.warn('End Close configuration still unavailable; retrying', {
+              error: again.kind === 'failed' ? again.error : again.kind,
+            })
+          }
+        }, (err: unknown) => {
+          log.error('End Close configuration retry failed', { error: (err as Error).message })
+        })
+      }, REMOTE_SEED_RETRY_MS)
+      retryTimer.unref()
+    }
     const admin = await buildAdminServer({
       db,
       dbPath,
@@ -130,11 +201,10 @@ async function main(): Promise<void> {
       telemetry,
       secrets: secretResolver,
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
+      remoteConfig: () => (remote ? remoteStatusOf(remote, retryTimer !== undefined) : undefined),
       onBootstrapApplied: () => {
-        if (restarting) return
-        restarting = true
-        log.info('initial config applied — restarting into running mode')
-        setTimeout(() => process.exit(0), 500) // let the HTTP response flush
+        stopRetrying()
+        restart('initial config applied — restarting into running mode')
       },
     })
     const metricsServer = buildMetricsServer({
@@ -241,6 +311,34 @@ async function main(): Promise<void> {
   }
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('SIGINT', () => void shutdown('SIGINT'))
+}
+
+function logRemoteSeed(result: RemoteSeedResult): void {
+  switch (result.kind) {
+    case 'none':
+      log.info('End Close holds no configuration for this API key — bootstrap mode')
+      break
+    case 'disabled':
+      log.info(
+        result.reason === 'env'
+          ? 'remote configuration disabled (RELAY_REMOTE_CONFIG) — bootstrap mode'
+          : 'no ENDCLOSE_API_KEY to fetch a configuration with — bootstrap mode',
+      )
+      break
+    case 'superseded':
+      log.info('a configuration was applied locally while fetching from End Close — keeping it')
+      break
+    case 'failed':
+      log.error(
+        result.retryable
+          ? 'fetching the configuration from End Close failed — bootstrap mode, retrying in the background'
+          : 'the configuration fetched from End Close could not be applied — bootstrap mode',
+        { error: result.error },
+      )
+      break
+    case 'seeded':
+      break
+  }
 }
 
 main().catch((err) => {

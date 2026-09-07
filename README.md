@@ -96,7 +96,8 @@ The root `docker-compose.yaml` below is the manual/dev application definition.
 
 ```sh
 mkdir -p /etc/endclose-relay
-cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed
+cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed (optional:
+                                                       # without it, End Close supplies one)
 # Provide the required env vars however you manage secrets; the compose file also
 # reads an optional .env next to it if that's your preference:
 #   ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET (Bearer <token you also set in Payabli>),
@@ -119,6 +120,11 @@ the matching `Authorization` header via `webHeaderParameters`.
   application — redeploys, image updates, and host re-provisioning can never clobber
   UI-made changes, because the config travels with the `relay-data` volume, which
   updates don't touch.
+- **No seed file? End Close provides the first one.** An empty application with no
+  `relay.yaml` fetches the routes document End Close holds for its API key (the key is
+  environment-scoped, so it alone selects the environment), stores it as version 1
+  attributed to `endclose`, and runs. It is fetched once, never re-fetched, and edited
+  in the UI like any other version. `RELAY_REMOTE_CONFIG=off` disables this.
 - **Updates are ours.** A new version is a new image tag; updating = pull + recreate
   against the same volume. End Close commits to config-schema compatibility within a
   major version (additive changes only) — enforced mechanically in CI, where the shipped
@@ -144,6 +150,8 @@ code can run inside a customer's own backend:
 
 See [`packages/core/README.md`](packages/core/README.md) for embedding the engine, and
 [`examples/embedded.ts`](examples/embedded.ts) for a dependency-free host on `node:http`.
+An embedded engine given no `routes` fetches them from End Close with its API key and
+keeps them current, so the configuration is managed in End Close rather than in the host.
 The packages are workspace-private for now; publishing them is a separate decision.
 
 ## Development

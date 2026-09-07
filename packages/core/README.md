@@ -27,6 +27,7 @@ migrate(db)
 
 const relay = createRelay({
   // The `routes` block of relay.yaml, validated. Only fields named in each `map` are forwarded.
+  // Omit `routes` entirely to run the configuration End Close holds for the API key (below).
   routes: parseRoutes(parse(readFileSync('relay.yaml', 'utf8'))),
   store: new SqliteEventStore(db),
   control: new SqliteControlStore(db),      // killswitch + per-route pause; omit for in-memory
@@ -57,6 +58,47 @@ process.on('SIGTERM', () => relay.stop().then(() => process.exit(0)))
 // 2c. Deliver before this process exits (shutdown, a serverless function):
 //     const out = await relay.flush({ timeoutMs: 5_000 })   // { delivered, retried, parked, drained, reason? }
 ```
+
+## Configuration from End Close
+
+Leave `routes` out and the engine fetches them from End Close (`GET /relays/config`) with
+the API key. Keys are issued per relay and scoped to one environment, so the key alone
+determines which environment's routes come back — nothing else selects it.
+
+```ts
+const relay = createRelay({
+  store, secrets, encryption, maskingKey,
+  endclose: { apiKey: process.env.ENDCLOSE_API_KEY! },
+  remoteConfig: { refreshIntervalMs: 60_000 },   // default
+})
+```
+
+- The first lookup fetches. Until a document has loaded, `ingest()` answers **503**
+  (`outcome: 'unavailable'`) so the processor retries, and a failed fetch is held for a
+  few seconds rather than repeated per webhook.
+- Afterwards lookups serve the cached document; once it is older than
+  `refreshIntervalMs` the next lookup re-fetches in the background, so changes made in
+  End Close reach a running relay within roughly one interval plus one request. A failed
+  refresh keeps the last document and is retried at the next interval.
+- The document is validated exactly like a local one (`parseRoutes`, including the hard
+  denylist and your registered `adapters`). Secrets are still references to names your
+  `SecretResolver` resolves; no secret travels from End Close.
+- `RemoteConfigError.kind` tells `unavailable` (retryable) from `unauthorized`,
+  `not_found` (nothing provisioned for this key) and `invalid`.
+
+For fail-fast boots, load explicitly — same options as `endclose:` — and pass the provider in:
+
+```ts
+import { remoteRoutes } from '@endclose/relay'
+const routes = remoteRoutes({ apiKey }, { logger })
+await routes.load()                              // throws RemoteConfigError
+const relay = createRelay({ routes, ... })
+routes.current()?.environment                    // e.g. 'sandbox', when End Close names it
+```
+
+`fetchRemoteConfig({ apiKey })` returns one validated document (`routes`, the raw
+`document`, `environment?`, `fetchedAt`) without a provider, for hosts that store
+configuration themselves.
 
 ## Knowing what happened to an event
 
