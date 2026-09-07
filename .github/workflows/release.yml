@@ -86,15 +86,18 @@ jobs:
         with:
           node-version-file: .nvmrc
       # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10. pnpm hands the actual
-      # upload to the npm binary on PATH. Install the newer npm into its own prefix: letting
-      # npm 10 overwrite itself in place fails half-way ("Cannot find module 'promise-retry'").
+      # upload to an npm binary, so install a newer one into its own prefix (letting npm 10
+      # overwrite itself in place fails half-way: "Cannot find module 'promise-retry'") and
+      # point pnpm at it explicitly via its npm-path setting. Prepending PATH is not enough:
+      # under pnpm/action-setup, pnpm resolved the npm next to the toolcache node (10.9.7),
+      # which has no OIDC support and failed with a bare ENEEDAUTH (v0.12.1, v0.12.2).
       - name: Install npm >= 11.5.1 alongside the bundled one
         run: |
           npm install -g --prefix "$RUNNER_TEMP/npm11" npm@latest
-          echo "$RUNNER_TEMP/npm11/bin" >> "$GITHUB_PATH"
-      - run: |
-          which npm && npm --version
-          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
+          NPM="$RUNNER_TEMP/npm11/bin/npm"
+          echo "npm_config_npm_path=$NPM" >> "$GITHUB_ENV"
+          V=$("$NPM" --version); echo "publishing with npm@$V at $NPM"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$V"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:packages
       # npm swallows a failed OIDC token exchange and reports a bare ENEEDAUTH. Print the
@@ -117,7 +120,8 @@ jobs:
       # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
       # --provenance=false instead (the manifests deliberately do not force provenance).
       # On failure, run once more at verbose level: that is where npm explains why the OIDC
-      # exchange was refused. The retry is safe because pnpm skips already-published versions.
+      # exchange was refused (and "npm info using npm@…" confirms which npm pnpm invoked).
+      # The retry is safe because pnpm skips already-published versions.
       - run: |
           PUBLISH="pnpm publish -r --filter ./packages/** --access public --provenance --no-git-checks"
           $PUBLISH || { echo "::group::verbose retry (look for 'oidc' lines)"; npm_config_loglevel=verbose $PUBLISH; }
