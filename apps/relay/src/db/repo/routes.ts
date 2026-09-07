@@ -1,5 +1,5 @@
-import type { Db } from '@endclose/relay-sqlite'
-import type { RouteConfig } from '@endclose/relay'
+import type { Db } from '@end-close/relay-sqlite'
+import type { RouteConfig } from '@end-close/relay'
 
 export interface RouteRow {
   id: string

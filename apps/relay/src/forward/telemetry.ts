@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs'
-import { EventsRepo, KvRepo, type Db } from '@endclose/relay-sqlite'
-import type { EndCloseClient, EventStatus, RelayHooks } from '@endclose/relay'
+import { EventsRepo, KvRepo, type Db } from '@end-close/relay-sqlite'
+import type { EndCloseClient, EventStatus, RelayHooks } from '@end-close/relay'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { readActiveConfigRaw } from '../config/store.js'
 import { isDbPathPersistent } from '../db/persistence.js'

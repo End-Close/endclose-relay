@@ -4,7 +4,7 @@ import {
   ROUTE_PAUSED_PREFIX,
   type Db,
   type Migration,
-} from '@endclose/relay-sqlite'
+} from '@end-close/relay-sqlite'
 
 // Application-owned tables. `001_init.sql` (the store package's first migration) created
 // these too on databases from before the split; IF NOT EXISTS makes both paths converge.

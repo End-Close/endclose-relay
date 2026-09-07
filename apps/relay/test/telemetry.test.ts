@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PermanentHttpError } from '@endclose/relay'
+import { PermanentHttpError } from '@end-close/relay'
 import {
   TELEMETRY_ERROR_LIMIT,
   Telemetry,

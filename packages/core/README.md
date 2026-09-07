@@ -1,4 +1,4 @@
-# @endclose/relay
+# @end-close/relay
 
 The store-and-forward engine behind the End Close relay application, as a library you embed in
 your own Node backend. Same code, same guarantees:
@@ -14,11 +14,21 @@ your own Node backend. Same code, same guarantees:
 
 Node `>=22.12`, ESM. The only runtime dependency is `zod`.
 
+## Install
+
+```sh
+npm install @end-close/relay @end-close/relay-sqlite
+```
+
+Install both at the same version: `@end-close/relay-sqlite` peers on `@end-close/relay`, and the
+packages are released together in lockstep with the relay application (the version on npm is the
+product version). Skip `@end-close/relay-sqlite` if you bring your own `EventStore`. MIT licensed.
+
 ## Quick start
 
 ```ts
-import { createRelay, parseRoutes, envSecrets } from '@endclose/relay'
-import { SqliteEventStore, SqliteControlStore, openDb, migrate } from '@endclose/relay-sqlite'
+import { createRelay, parseRoutes, envSecrets } from '@end-close/relay'
+import { SqliteEventStore, SqliteControlStore, openDb, migrate } from '@end-close/relay-sqlite'
 import { parse } from 'yaml'
 import { readFileSync } from 'node:fs'
 
@@ -92,12 +102,12 @@ What your framework must do because the engine cannot:
 
 `EventStore` is an async interface (`packages/core/src/engine/store.ts`). Ships with:
 
-- `@endclose/relay-sqlite` — the application's store. Rollback journal + `synchronous=FULL`,
+- `@end-close/relay-sqlite` — the application's store. Rollback journal + `synchronous=FULL`,
   safe on network filesystems. Add `SqliteControlStore` for killswitch state.
 - `memoryStore()` — in-process, **not durable**. For development and tests.
 
 Any implementation that passes `describeEventStoreContract()` from
-`@endclose/relay-store-contract` works. Claiming is lease-based, so several instances can
+`@end-close/relay-store-contract` works. Claiming is lease-based, so several instances can
 share one store (a SQL store would use `FOR UPDATE SKIP LOCKED` in `claimDue`). Give each
 long-lived replica a stable, distinct `instanceId`: on boot an instance reclaims batches it
 left `delivering` (a crash), and every `recoverIntervalMs` it sweeps leases other instances
@@ -127,4 +137,4 @@ For a backend with its own queue: `verify` via `adapterFor(source).verify(raw, r
 `mapEvent(route, payload, receivedAt, maskingKey)`, `EndCloseClient`, `hardDenyDeep`,
 `keyNameIsSensitive`, `parseRoutes`.
 
-See `COMPATIBILITY.md` for what is a stable contract.
+See [`COMPATIBILITY.md`](./COMPATIBILITY.md) for what is a stable contract.

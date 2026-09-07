@@ -1,9 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs'
-import { KvRepo, type Db } from '@endclose/relay-sqlite'
+import { KvRepo, type Db } from '@end-close/relay-sqlite'
 import { RoutesRepo } from '../db/repo/routes.js'
 import { AuditRepo } from '../db/repo/audit.js'
 import { parseConfig, type LoadedConfig } from './load.js'
-import { envSecrets, requireSecret, type SecretResolver } from '@endclose/relay'
+import { envSecrets, requireSecret, type SecretResolver } from '@end-close/relay'
 
 // The database is the source of truth for configuration: the latest config_versions row
 // IS the config. A relay.yaml file is only read once — to seed an empty database on

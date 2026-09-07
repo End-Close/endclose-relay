@@ -18,7 +18,7 @@ import {
   type Lease,
   type NewEvent,
   type RouteStats,
-} from '@endclose/relay'
+} from '@end-close/relay'
 
 // SQLite implementations of the engine's storage contracts. Lock contention (SQLITE_BUSY,
 // common on network filesystems such as EFS) is retried here and surfaced as

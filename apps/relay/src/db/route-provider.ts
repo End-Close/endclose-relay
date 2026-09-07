@@ -1,5 +1,5 @@
-import { noopLogger, type Logger, type RouteConfig, type RouteProvider } from '@endclose/relay'
-import { runSqlite, type Db } from '@endclose/relay-sqlite'
+import { noopLogger, type Logger, type RouteConfig, type RouteProvider } from '@end-close/relay'
+import { runSqlite, type Db } from '@end-close/relay-sqlite'
 import { RoutesRepo } from './repo/routes.js'
 
 /** Live route definitions from the application database: every config apply is visible immediately. */

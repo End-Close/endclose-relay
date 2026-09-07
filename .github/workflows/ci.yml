@@ -23,6 +23,9 @@ jobs:
       # Shipped configs staying parseable (the schema-compatibility promise) is
       # covered by apps/relay/test/config.test.ts in the suite above.
       - run: pnpm build
+      # Pack the npm packages as the release would, check the tarballs, and smoke-install them
+      # into a throwaway project so a broken `files` list or `exports` map fails the PR.
+      - run: scripts/verify-packs.sh
 
   docker:
     runs-on: ubuntu-latest
