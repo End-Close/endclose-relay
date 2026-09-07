@@ -29,7 +29,7 @@ import {
   type RouteProvider,
 } from './store.js'
 
-// The embeddable engine: everything the appliance does between "webhook arrives" and
+// The embeddable engine: everything the application does between "webhook arrives" and
 // "record accepted by End Close", with storage, secrets, logging and observability
 // supplied by the host.
 
@@ -56,7 +56,7 @@ export interface RelayOptions {
   /** Lease owner for claimed batches. Give each long-lived replica a stable id. */
   instanceId?: string
   hooks?: RelayHooks
-  /** Supply a pre-built client (the appliance shares one with telemetry). */
+  /** Supply a pre-built client (the application shares one with telemetry). */
   client?: EndCloseClient
 }
 

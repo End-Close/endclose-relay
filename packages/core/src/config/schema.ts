@@ -42,7 +42,7 @@ const dateRefSchema = z.union([
 export type DateRef = z.infer<typeof dateRefSchema>
 
 // A secret reference: the NAME the host's SecretResolver resolves (an env var in the
-// appliance). The value itself never appears in config or the database. The field is
+// application). The value itself never appears in config or the database. The field is
 // deliberately named as a reference so a value is never mistaken for it.
 const secretRef = z.string().min(1)
 

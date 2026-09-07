@@ -1,7 +1,7 @@
 node_modules
 **/node_modules
-dist
 **/dist
-data
+**/*.tsbuildinfo
 .git
-.claude
+data
+**/data

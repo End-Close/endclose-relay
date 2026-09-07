@@ -29,7 +29,7 @@ whole sandbox phase to take about an hour of hands-on time.
   `total_amount`, `return_amount`, `entry_point`, `paypoint` on settlements;
   `method`, `paypoint` on batches) so they are validated and displayed in the
   dashboard.
-- Issue an environment-scoped API key for the appliance (sandbox first, production at
+- Issue an environment-scoped API key for the application (sandbox first, production at
   go-live).
 
 ## 1. Install (sandbox)

@@ -1,5 +1,5 @@
 // Secret resolution for the engine. Route configs reference secrets by NAME only (the
-// `secret_env` field); the host decides where the value comes from. The appliance uses the
+// `secret_env` field); the host decides where the value comes from. The application uses the
 // process environment; an embedding application may use a static map loaded from its
 // secret manager at startup.
 //

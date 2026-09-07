@@ -1,7 +1,7 @@
 {
   "name": "endclose-relay",
   "version": "0.11.0",
-  "description": "Self-hosted webhook relay appliance: receives payment-processor webhooks, persists, masks, and forwards them to End Close via the public API",
+  "description": "Self-hosted webhook relay for End Close: the application (apps/relay) and the embeddable engine it is built on (packages/*). This manifest carries the product version the release workflow bumps.",
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
@@ -16,43 +16,20 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "pnpm build:packages && tsx src/index.ts",
-    "dev:all": "mprocs",
-    "dev:ui": "vite",
-    "build": "pnpm build:packages && tsc && vite build",
+    "dev": "pnpm build:packages && pnpm --filter @endclose/relay-app dev",
+    "dev:all": "pnpm build:packages && pnpm --filter @endclose/relay-app dev:all",
+    "dev:ui": "pnpm --filter @endclose/relay-app dev:ui",
+    "build": "pnpm build:packages && pnpm --filter @endclose/relay-app build",
     "build:packages": "pnpm -r --filter './packages/**' run build",
-    "start": "node dist/index.js",
-    "relayctl": "tsx src/cli/relayctl.ts",
+    "start": "pnpm --filter @endclose/relay-app start",
+    "relayctl": "pnpm --filter @endclose/relay-app relayctl",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm build:packages && tsc --noEmit && tsc --noEmit -p ui"
-  },
-  "bin": {
-    "relayctl": "./dist/cli/relayctl.js"
-  },
-  "dependencies": {
-    "@endclose/relay": "workspace:*",
-    "@endclose/relay-sqlite": "workspace:*",
-    "@fastify/static": "^10.1.2",
-    "fastify": "^5.3.2",
-    "pino": "^9.6.0",
-    "prom-client": "^15.1.3",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "yaml": "^2.7.0"
+    "typecheck": "pnpm build:packages && pnpm --filter @endclose/relay-app typecheck"
   },
   "devDependencies": {
-    "@endclose/relay-store-contract": "workspace:*",
-    "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^22.13.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.2.0",
-    "mprocs": "^0.9.6",
-    "tailwindcss": "^4.3.2",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.2",
-    "vite": "^7.3.6",
     "vitest": "^3.0.9"
   }
 }

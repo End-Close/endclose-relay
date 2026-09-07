@@ -2,7 +2,7 @@ import { noopLogger, type Logger, type RouteConfig, type RouteProvider } from '@
 import { runSqlite, type Db } from '@endclose/relay-sqlite'
 import { RoutesRepo } from './repo/routes.js'
 
-/** Live route definitions from the appliance database: every config apply is visible immediately. */
+/** Live route definitions from the application database: every config apply is visible immediately. */
 export class DbRouteProvider implements RouteProvider {
   private routes: RoutesRepo
   private logger: Logger

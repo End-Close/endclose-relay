@@ -23,8 +23,8 @@ import { Metrics } from '../src/metrics/metrics.js'
 import { log } from '../src/log.js'
 
 export const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
-export { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../packages/core/test/helpers.js'
-import { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../packages/core/test/helpers.js'
+export { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../../../packages/core/test/helpers.js'
+import { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from '../../../packages/core/test/helpers.js'
 
 export function setupDb(ecPort = 9999): {
   db: Db

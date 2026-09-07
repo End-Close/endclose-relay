@@ -21,7 +21,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       # Shipped configs staying parseable (the schema-compatibility promise) is
-      # covered by test/config.test.ts in the suite above.
+      # covered by apps/relay/test/config.test.ts in the suite above.
       - run: pnpm build
 
   docker:

@@ -6,11 +6,11 @@ import {
   type Migration,
 } from '@endclose/relay-sqlite'
 
-// Appliance-owned tables. `001_init.sql` (the store package's first migration) created
+// Application-owned tables. `001_init.sql` (the store package's first migration) created
 // these too on databases from before the split; IF NOT EXISTS makes both paths converge.
-export const APPLIANCE_MIGRATIONS: Migration[] = [
+export const APPLICATION_MIGRATIONS: Migration[] = [
   {
-    name: '001_appliance.sql',
+    name: '001_application.sql',
     sql: `
 CREATE TABLE IF NOT EXISTS routes (
   id          TEXT PRIMARY KEY,
@@ -49,7 +49,7 @@ INSERT INTO kv (key, value, updated_at)
   },
 ]
 
-/** Apply the store's migrations and then the appliance's. */
+/** Apply the store's migrations and then the application's. */
 export function migrate(db: Db): void {
-  migrateStore(db, [STORE_MIGRATIONS, APPLIANCE_MIGRATIONS])
+  migrateStore(db, [STORE_MIGRATIONS, APPLICATION_MIGRATIONS])
 }

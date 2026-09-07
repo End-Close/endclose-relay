@@ -39,5 +39,5 @@ procs:
     autostart: false # vite dev server on :5173, proxies API calls to the relay on :8081
 
   test:
-    shell: pnpm vitest
+    shell: pnpm -w test:watch
     autostart: false

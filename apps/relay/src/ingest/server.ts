@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { IngestResult, RawRequest } from '@endclose/relay'
 
-// The appliance's webhook listener: a thin Fastify shell around the engine's ingest path.
+// The application's webhook listener: a thin Fastify shell around the engine's ingest path.
 
 export interface IngestDeps {
   ingest(routeId: string, req: RawRequest): Promise<IngestResult>

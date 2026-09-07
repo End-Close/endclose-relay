@@ -6,3 +6,4 @@ dist/
 .env
 data/
 deploy/fargate/secrets.env
+*.tsbuildinfo

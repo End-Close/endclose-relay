@@ -6,7 +6,7 @@ const base = pino({
   redact: { paths: ['*.authorization', '*.secret'], censor: '[REDACTED]' },
 })
 
-/** The appliance's pino-backed logger. */
+/** The application's pino-backed logger. */
 export const log: Logger = {
   info: (msg, meta = {}) => base.info(meta, msg),
   warn: (msg, meta = {}) => base.warn(meta, msg),

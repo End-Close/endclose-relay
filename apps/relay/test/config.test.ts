@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parseConfig } from '../src/config/load.js'
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const APP = join(dirname(fileURLToPath(import.meta.url)), '..')
+// relay.example.yaml is the customer-facing seed and ships from the repo root.
+const ROOT = join(APP, '..', '..')
 
 describe('shipped configs stay parseable', () => {
   // These files are the customer-facing contract: a schema change that breaks them
@@ -18,17 +20,17 @@ describe('shipped configs stay parseable', () => {
     const withExtras = `
 endclose:
   base_url: https://api-staging.endclose.com/v1
-` + readFileSync(join(ROOT, 'dev/relay.dev.yaml'), 'utf8')
+` + readFileSync(join(APP, 'dev/relay.dev.yaml'), 'utf8')
     expect(() => parseConfig(withExtras)).toThrow(/[Uu]nrecognized/)
   })
 
   it('dev/relay.dev.yaml', () => {
-    const { config } = parseConfig(readFileSync(join(ROOT, 'dev/relay.dev.yaml'), 'utf8'))
+    const { config } = parseConfig(readFileSync(join(APP, 'dev/relay.dev.yaml'), 'utf8'))
     expect(config.routes).toHaveLength(2)
   })
 
   it('rejects duplicate route ids', () => {
-    const yaml = readFileSync(join(ROOT, 'dev/relay.dev.yaml'), 'utf8')
+    const yaml = readFileSync(join(APP, 'dev/relay.dev.yaml'), 'utf8')
     const dup = yaml + yaml.slice(yaml.indexOf('routes:') + 'routes:'.length)
     expect(() => parseConfig(dup)).toThrow()
   })

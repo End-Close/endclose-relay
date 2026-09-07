@@ -1,7 +1,7 @@
 import type { RouteConfig } from '../config/schema.js'
 
 // The persistence contracts the engine depends on. A host supplies implementations: the
-// appliance uses SQLite; an embedding application may use its own database. Every
+// application uses SQLite; an embedding application may use its own database. Every
 // method is async so implementations can be backed by a network database.
 
 export type EventStatus =
@@ -152,7 +152,7 @@ export interface ControlStore {
   setRoutePaused(routeId: string, paused: boolean): Promise<void>
 }
 
-/** Where the engine reads route definitions. Static for an embedding app; live for the appliance. */
+/** Where the engine reads route definitions. Static for an embedding app; live for the application. */
 export interface RouteProvider {
   get(id: string): Promise<RouteConfig | undefined>
   all(): Promise<RouteConfig[]>

@@ -1,10 +1,10 @@
 # Configuration Reference
 
 The complete configuration surface — a declarative YAML document, edited and versioned
-in the admin UI's config tab (a `relay.yaml` file seeds the appliance once, on first
-boot). Authoritative source: `src/config/schema.ts` (zod); anything the schema rejects
+in the admin UI's config tab (a `relay.yaml` file seeds the application once, on first
+boot). Authoritative source: `packages/core/src/config/schema.ts` (zod); anything the schema rejects
 fails validation in the UI and at boot. Shipped configs (`relay.example.yaml`,
-`dev/relay.dev.yaml`) are validated in CI, which is how we keep the compatibility
+`apps/relay/dev/relay.dev.yaml`) are validated in CI, which is how we keep the compatibility
 promise: schema changes that would break an existing config fail our build.
 
 Secrets never appear in this file — fields ending in `_env` name an **environment
@@ -54,7 +54,7 @@ One route = one inbound webhook source = one End Close data stream.
 ```yaml
 routes:
   - id: payabli-settlements          # lowercase slug; URL: POST /ingest/<id>
-    source: payabli                  # adapter: payabli | generic_hmac (the appliance ships these two)
+    source: payabli                  # adapter: payabli | generic_hmac (the application ships these two)
     auth: { ... }                    # per-source, below
     events: ["TransferFunded"]       # optional; payload event types this route accepts
                                      # ('*' globs allowed). Others persist locally as
@@ -113,7 +113,7 @@ customer_email:
 
 Transforms: `trim`, `lowercase` (strings; elementwise over wildcard arrays), `hash`
 (keyed HMAC-SHA256 under `MASKING_HMAC_KEY` — deterministic, so End Close can match
-values it never sees raw; the key never leaves the appliance).
+values it never sees raw; the key never leaves the application).
 
 **Hard denylist (not configurable):** Luhn-valid PANs and SSN patterns inside mapped
 string values are redacted, and validation rejects mapping sensitive-named fields (cvv,
@@ -125,7 +125,7 @@ shows the outbound record plus every field that is *not* forwarded.
 
 ## Lifecycle
 
-The database is authoritative. `relay.yaml` seeds an empty appliance on first boot and
+The database is authoritative. `relay.yaml` seeds an empty application on first boot and
 is ignored afterwards. Edits happen in the config tab: **validate** (schema + secret
 env status), **preview**, **apply** — each apply appends an immutable version (full
 YAML, SHA-256 hash, timestamp) and an audit entry, and **takes effect immediately**

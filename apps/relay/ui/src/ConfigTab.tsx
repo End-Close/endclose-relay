@@ -13,7 +13,7 @@ import {
 } from './api.js'
 import { fmtAgo } from './format.js'
 
-// Editor starter for a fresh appliance (bootstrap mode) — a commented skeleton, not a
+// Editor starter for a fresh application (bootstrap mode) — a commented skeleton, not a
 // working config: every value below is customer-specific and reviewed with End Close.
 const STARTER_YAML = `# endclose-relay configuration — routes only; see docs/CONFIG.md.
 # (The End Close endpoint, ports, and tuning are environment settings, not config.)

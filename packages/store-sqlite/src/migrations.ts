@@ -2,7 +2,7 @@ import type { Db } from './db.js'
 
 // Schema migrations, inlined so the package is bundler-friendly. Names are the keys in
 // schema_migrations, so they must never change once shipped. `001_init.sql` once created
-// the appliance's tables too; those now live in the appliance's own migration set, which
+// the application's tables too; those now live in the application's own migration set, which
 // uses IF NOT EXISTS so both fresh and upgraded databases converge.
 
 export interface Migration {

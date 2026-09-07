@@ -43,7 +43,7 @@ export interface AdminDeps {
   /** "user:password" — required. */
   basicAuth: string
   maskingKey: Buffer
-  /** Decrypts buffered webhook payloads for operator inspection (never leaves the appliance). */
+  /** Decrypts buffered webhook payloads for operator inspection (never leaves the application). */
   dataKey: Buffer
   /** 'bootstrap' = no config yet: UI shows the setup editor; ingest is not running. */
   mode?: 'bootstrap' | 'running'
@@ -124,7 +124,7 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
       mode,
       uptime_s: Math.round((now - deps.startedAt) / 1000),
       // Boot check surfaced to the UI: secrets referenced by the active config (plus the
-      // appliance keys) and whether each is currently set in the environment.
+      // application keys) and whether each is currently set in the environment.
       secret_envs: activeConfig ? envStatus(activeConfig, secrets) : [],
       config_hash: current?.config_hash ?? null,
       config_applied_at: current?.applied_at ?? null,

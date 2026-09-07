@@ -1,6 +1,6 @@
 # @endclose/relay
 
-The store-and-forward engine behind the End Close relay appliance, as a library you embed in
+The store-and-forward engine behind the End Close relay application, as a library you embed in
 your own Node backend. Same code, same guarantees:
 
 1. **Verify** each webhook over the raw bytes (Payabli static header + source IP; HMAC for
@@ -84,7 +84,7 @@ What your framework must do because the engine cannot:
 
 - **Hand over the raw body.** Signature verification and the stored payload operate on the
   exact bytes the processor sent. Disable JSON pre-parsing for the webhook route.
-- **Cap request size** before it reaches `ingest` (the appliance uses 10 MB); per-route
+- **Cap request size** before it reaches `ingest` (the application uses 10 MB); per-route
   `max_body_bytes` is enforced inside.
 - **Pass the real client IP** if you use `allowed_ips` (configure your proxy trust).
 
@@ -92,7 +92,7 @@ What your framework must do because the engine cannot:
 
 `EventStore` is an async interface (`packages/core/src/engine/store.ts`). Ships with:
 
-- `@endclose/relay-sqlite` — the appliance's store. Rollback journal + `synchronous=FULL`,
+- `@endclose/relay-sqlite` — the application's store. Rollback journal + `synchronous=FULL`,
   safe on network filesystems. Add `SqliteControlStore` for killswitch state.
 - `memoryStore()` — in-process, **not durable**. For development and tests.
 
@@ -105,7 +105,7 @@ share one store (a SQL store would use `FOR UPDATE SKIP LOCKED` in `claimDue`).
 `relay.on(event, handler)` delivers metadata-only events: `ingest`, `stored`, `settled`,
 `forward`, `delivered`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads are never
 included.
-The appliance drives its Prometheus metrics and call-home from these; the engine itself
+The application drives its Prometheus metrics and call-home from these; the engine itself
 never phones home.
 
 ## Operating
