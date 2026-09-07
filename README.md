@@ -137,7 +137,7 @@ code can run inside a customer's own backend:
 
 | Package | Contents |
 |---|---|
-| `packages/core` — `@endclose/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
+| `packages/core` — `@endclose/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, host enrichments (map fields computed by the embedding backend's own code), End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
 | `packages/store-sqlite` — `@endclose/relay-sqlite` | the SQLite event/control store the application uses (safe on EFS/NFS). |
 | `packages/store-contract` — `@endclose/relay-store-contract` | the behavioural test suite every store implementation must pass. |
 | `apps/relay` — the application | boot, admin UI/API, `relayctl`, metrics, telemetry, config versioning. The repo root holds the product version, the Dockerfile, compose and deploy files. |

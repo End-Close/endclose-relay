@@ -2,8 +2,19 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
-import { createRelay, parseRoutes, memoryStore, StoreUnavailableError, MemoryControlStore } from '../src/index.js'
-import { FIXTURES, TEST_CONFIG_YAML } from './helpers.js'
+import {
+  createRelay,
+  parseRoutes,
+  memoryStore,
+  StoreUnavailableError,
+  MemoryControlStore,
+  EnrichmentError,
+  type Enrichment,
+  type Json,
+  type RelayOptions,
+  type RouteConfig,
+} from '../src/index.js'
+import { FIXTURES, TEST_CONFIG_YAML, TRANSACTION_ROUTES_YAML } from './helpers.js'
 
 // The SDK path end to end: no HTTP server, no SQLite, no process environment. A host
 // calls relay.ingest() with raw request parts and relay.dispatchOnce() from a scheduler.
@@ -31,7 +42,7 @@ function fakeEndClose() {
   return { posts, fetchImpl, fail: (n: number) => (failNext = n) }
 }
 
-function makeRelay(ec = fakeEndClose()) {
+function makeRelay(ec = fakeEndClose(), extra: Partial<RelayOptions> = {}) {
   const relay = createRelay({
     routes: parseRoutes(parse(TEST_CONFIG_YAML)),
     store: memoryStore(),
@@ -39,8 +50,9 @@ function makeRelay(ec = fakeEndClose()) {
     endclose: { apiKey: 'k', baseUrl: 'https://ec.test/v1', fetch: ec.fetchImpl },
     encryption: { dataKey: 'test-data-key-0123456789' },
     maskingKey: 'test-masking-key-0123456789',
-    dispatch: { backoffBaseMs: 1, backoffCapMs: 1 },
     instanceId: 'sdk-test',
+    ...extra,
+    dispatch: { backoffBaseMs: 1, backoffCapMs: 1, ...extra.dispatch },
   })
   return { relay, ec }
 }
@@ -293,5 +305,158 @@ describe('route schema policy', () => {
     }
     expect(() => createRelay({ ...base, routes: [route] })).toThrow(/no adapter for source "acme"/)
     expect(() => createRelay({ ...base, routes: [route], adapters: { acme: { ...payabliAdapter, name: 'acme' } } })).not.toThrow()
+  })
+})
+
+describe('enrichments (host functions named from the map)', () => {
+  const fixture = JSON.parse(readFileSync(join(FIXTURES, 'payabli-transaction.json'), 'utf8')) as Record<string, Json>
+  /** The transaction fixture with its own ids, serialised for ingest. */
+  const txn = (id: string, payor = `payor_${id}`) =>
+    req(Buffer.from(JSON.stringify({ ...fixture, TransactionId: id, PayorId: payor })))
+  const txnRoutes = (enrichments: Record<string, Enrichment>, edit: (r: RouteConfig) => RouteConfig = (r) => r) =>
+    parseRoutes(parse(TRANSACTION_ROUTES_YAML), { enrichments }).map(edit)
+  const withEnrichments = (enrichments: Record<string, Enrichment>, extra: Partial<RelayOptions> = {}, edit?: (r: RouteConfig) => RouteConfig) =>
+    makeRelay(fakeEndClose(), { routes: txnRoutes(enrichments, edit), enrichments, ...extra })
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  it('fills the enriched field from the source value and reports names, never values', async () => {
+    const seen: unknown[] = []
+    const { relay, ec } = withEnrichments({
+      resident_name: (payorId, ctx) => {
+        seen.push({ payorId, field: ctx.field, routeId: ctx.routeId, eventType: ctx.eventType, hasPayload: ctx.payload !== undefined })
+        return payorId === 'payor_a' ? 'Pat Example' : undefined
+      },
+    })
+    const hookEvents: unknown[] = []
+    for (const name of ['enrich', 'settled', 'forward', 'delivered', 'batch.forwarded'] as const) {
+      relay.on(name, (e) => hookEvents.push({ name, ...e }))
+    }
+    const a = await relay.ingest('payabli-transactions', txn('a'))
+    const b = await relay.ingest('payabli-transactions', txn('b'))
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 2, retried: 0, parked: 0 })
+
+    expect(seen).toEqual([
+      { payorId: 'payor_a', field: 'metadata.resident_name', routeId: 'payabli-transactions', eventType: 'ApprovedPayment', hasPayload: true },
+      { payorId: 'payor_b', field: 'metadata.resident_name', routeId: 'payabli-transactions', eventType: 'ApprovedPayment', hasPayload: true },
+    ])
+    const records = ec.posts[0]!.body.records
+    expect(records[0]).toMatchObject({ external_id: 'a', metadata: { paypoint: 'Acme Field Services', resident_name: 'Pat Example' } })
+    expect(records[1].metadata).toEqual({ paypoint: 'Acme Field Services' }) // undefined → omitted, still sent
+    expect(hookEvents).toContainEqual({ name: 'enrich', routeId: 'payabli-transactions', id: a.id, field: 'metadata.resident_name', enrichment: 'resident_name', result: 'applied' })
+    expect(hookEvents).toContainEqual({ name: 'enrich', routeId: 'payabli-transactions', id: b.id, field: 'metadata.resident_name', enrichment: 'resident_name', result: 'omitted' })
+    expect(JSON.stringify(hookEvents)).not.toContain('Pat Example')
+    expect(JSON.stringify(hookEvents)).not.toContain('payor_')
+  })
+
+  it('a throwing enrichment retries only that event; the rest of the batch ships', async () => {
+    let dbDown = true
+    const { relay, ec } = withEnrichments({
+      resident_name: async (payorId) => {
+        if (dbDown && payorId === 'payor_b') throw new Error('residents db unavailable')
+        return 'Resident ' + String(payorId)
+      },
+    })
+    const settled: unknown[] = []
+    relay.on('settled', (e) => settled.push(e))
+    await relay.ingest('payabli-transactions', txn('a'))
+    const b = await relay.ingest('payabli-transactions', txn('b'))
+
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 1, parked: 0 })
+    expect(ec.posts).toHaveLength(1)
+    expect(ec.posts[0]!.body.records.map((r: any) => r.external_id)).toEqual(['a'])
+    expect(settled).toContainEqual({ id: b.id, routeId: 'payabli-transactions', result: 'retried', error: expect.stringMatching(/^enrichment failed: metadata.resident_name \(resident_name\): residents db unavailable$/) })
+    const row = await relay.store.getById(b.id!)
+    expect(row).toMatchObject({ status: 'retry', attempts: 1 })
+    expect(row!.last_error).toMatch(/residents db unavailable/)
+
+    dbDown = false
+    await sleep(5)
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+    expect(ec.posts[1]!.body.records[0]).toMatchObject({ external_id: 'b', metadata: { resident_name: 'Resident payor_b' } })
+  })
+
+  it('a slow enrichment is bounded by enrichTimeoutMs and retried', async () => {
+    const { relay } = withEnrichments({ resident_name: () => new Promise(() => {}) }, { dispatch: { enrichTimeoutMs: 20 } })
+    const settled: any[] = []
+    relay.on('enrich', (e) => settled.push(e))
+    await relay.ingest('payabli-transactions', txn('a'))
+    const t = Date.now()
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 0, retried: 1, parked: 0 })
+    expect(Date.now() - t).toBeLessThan(2000)
+    expect(settled[0]).toMatchObject({ result: 'failed', error: 'resident_name: timed out after 20 ms' })
+  })
+
+  it('parks, never retries, when the host says so or returns something unforwardable', async () => {
+    const cases: { name: string; enrichment: Enrichment; reason: RegExp; edit?: (r: RouteConfig) => RouteConfig }[] = [
+      { name: 'EnrichmentError', enrichment: () => { throw new EnrichmentError('no such resident') }, reason: /^enrichment failed: metadata.resident_name \(resident_name\): no such resident$/ },
+      { name: 'non-JSON', enrichment: () => (() => 1) as unknown as Json, reason: /is not JSON/ },
+      { name: 'sensitive nested key', enrichment: () => ({ ssn: '1' }), reason: /metadata.resident_name.ssn" matches the hard denylist/ },
+      {
+        name: 'non-string description',
+        enrichment: () => ({ a: 1 }),
+        reason: /description \(resident_name\): enriched description must be a string/,
+        edit: (r) => ({ ...r, map: { ...r.map, metadata: { paypoint: 'Paypoint' }, description: { source: 'PayorId', enrich: 'resident_name' } } }),
+      },
+    ]
+    for (const c of cases) {
+      const { relay, ec } = withEnrichments({ resident_name: c.enrichment }, {}, c.edit)
+      const enrich: any[] = []
+      relay.on('enrich', (e) => enrich.push(e))
+      const { id } = await relay.ingest('payabli-transactions', txn('a'))
+      expect(await relay.dispatchOnce(), c.name).toEqual({ delivered: 0, retried: 0, parked: 1 })
+      expect((await relay.store.getById(id!))!.last_error, c.name).toMatch(c.reason)
+      expect(enrich[0].result, c.name).toBe('rejected')
+      expect(ec.posts, c.name).toHaveLength(0)
+    }
+  })
+
+  it('a route from a provider that names an unregistered enrichment parks its events', async () => {
+    const ec = fakeEndClose()
+    const route = txnRoutes({ resident_name: () => 'x' })[0]!
+    const relay = createRelay({
+      routes: { get: async (id) => (id === route.id ? route : undefined), all: async () => [route] },
+      store: memoryStore(),
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', fetch: ec.fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+      // no enrichments registered
+    })
+    const { id } = await relay.ingest('payabli-transactions', txn('a'))
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 0, retried: 0, parked: 1 })
+    expect((await relay.store.getById(id!))!.last_error).toMatch(/references unknown enrichment "resident_name"/)
+  })
+
+  it('static routes naming an unregistered enrichment are rejected at construction', () => {
+    const routes = txnRoutes({ resident_name: () => 'x' })
+    expect(() => makeRelay(fakeEndClose(), { routes })).toThrow(/unknown enrichment "resident_name"/)
+    expect(() => makeRelay(fakeEndClose(), { routes, enrichments: { resident_name: () => 'x' } })).not.toThrow()
+  })
+
+  it('enriched strings pass the hard denylist, and routes without enrich emit no enrich events', async () => {
+    const { relay, ec } = withEnrichments({ resident_name: () => 'card 4111 1111 1111 1111' })
+    const enrich: unknown[] = []
+    relay.on('enrich', (e) => enrich.push(e))
+    await relay.ingest('payabli-transactions', txn('a'))
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+    expect(ec.posts[0]!.body.records[0].metadata.resident_name).toBe('card [REDACTED]')
+    expect(enrich).toHaveLength(1)
+
+    const plain = makeRelay()
+    plain.relay.on('enrich', (e) => enrich.push(e))
+    await plain.relay.ingest('payabli-settlements', req(settlement))
+    expect(await plain.relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+    expect(enrich).toHaveLength(1)
+  })
+
+  it('preview lists enriched fields as pending instead of running the host function', () => {
+    let calls = 0
+    const { relay } = withEnrichments({ resident_name: () => { calls++; return 'x' } })
+    const route = txnRoutes({ resident_name: () => 'x' })[0]!
+    const { record, report, pending } = relay.preview(route, fixture)
+    expect(calls).toBe(0)
+    expect(record.metadata).toEqual({ paypoint: 'Acme Field Services' })
+    expect(report.enriched).toEqual(['metadata.resident_name'])
+    expect(pending).toHaveLength(1)
   })
 })

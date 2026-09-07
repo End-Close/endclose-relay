@@ -8,7 +8,9 @@ your own Node backend. Same code, same guarantees:
 2. **Persist it durably before acknowledging** in a store you choose.
 3. **Map** it to an End Close record through an explicit field map: the map *is* the
    allowlist, and a non-configurable hard denylist (PANs, SSNs, secret-named fields) applies
-   on top.
+   on top. A mapped field may name an **enrichment**: a function of yours that turns the
+   payload value into what is forwarded (a resident's name from a payer id, say). The map
+   still names every field; your code only fills the ones it points at.
 4. **Forward** in batches to End Close's public API with exponential backoff, idempotency
    at both ends, and parking (never silent dropping) of events that cannot be delivered.
 
@@ -26,7 +28,8 @@ const db = openDb('/var/lib/myapp/relay.db')
 migrate(db)
 
 const relay = createRelay({
-  // The `routes` block of relay.yaml, validated. Only fields named in each `map` are forwarded.
+  // The `routes` block of relay.yaml, validated. Only fields named in each `map` are forwarded
+  // (pass `{ enrichments }` as the second argument if any route uses `enrich:`).
   routes: parseRoutes(parse(readFileSync('relay.yaml', 'utf8'))),
   store: new SqliteEventStore(db),
   control: new SqliteControlStore(db),      // killswitch + per-route pause; omit for in-memory
@@ -80,6 +83,67 @@ never **sent**. The accepted result carries the store `id`. From there:
 schedule as the guarantee, and optionally `await relay.flush()` after `ingest()` for low
 latency when End Close is healthy.
 
+## Enriching fields from your own data
+
+A webhook rarely carries everything End Close should see. When the missing value lives in
+your own systems, register an **enrichment** and name it from the map:
+
+```ts
+const enrichments = {
+  // (value at `source` after transforms, ctx) → the value to forward. undefined → omit the field.
+  resident_name: async (payorId, ctx) => {
+    const r = await residents.findByPayerId(String(payorId))   // your database, your code
+    return r?.fullName
+  },
+}
+const relay = createRelay({
+  routes: parseRoutes(parse(yaml), { enrichments }),   // validation knows the registered names
+  enrichments,
+  dispatch: { enrichTimeoutMs: 3_000 },                 // per call; default 5 s
+  ...
+})
+```
+
+```yaml
+map:
+  external_id: TransactionId
+  amount: NetAmount
+  direction: credit
+  metadata:
+    paypoint: Paypoint
+    resident_name: { source: PayorId, enrich: resident_name }
+    resident_unit: { source: PayorId, transform: trim, enrich: resident_unit }
+```
+
+How it behaves:
+
+- **The map stays the allowlist.** `enrich:` is allowed on `metadata` entries and
+  `description` only; `external_id` and `amount` are never host-computed. A route that names
+  an enrichment you have not registered fails `parseRoutes` / `createRelay` (or parks its
+  events, for routes from a `RouteProvider`). The shipped application registers none, so it
+  rejects `enrich:` outright.
+- **Order per field:** source value → `transform`s → your function → validation → hard
+  denylist → record. If the source is absent the function is not called and the field is
+  omitted. `ctx` carries `routeId`, `source`, `eventId`, `eventType`, `receivedAt`, `field`
+  and the decrypted `payload` for inputs beyond the one value.
+- **Return `undefined`** to omit the field and still send the record (unknown payer).
+  **Throw** to retry the whole event with backoff — the rest of its batch still ships, and it
+  parks after `parkAfterMs` like any retrying event. **Throw `EnrichmentError`** to park it
+  now. A call slower than `enrichTimeoutMs` counts as a throw.
+- **What you return is checked like any mapped value:** JSON only, no sensitive key names
+  at any depth, PANs and SSNs inside strings redacted, and a sensitive output name (`ssn`,
+  `account_number`, …) is refused by the schema even with `transform: hash`, since the
+  hash protects the input, not your output. A bad value parks the event with the reason.
+- **Enrichments are reads that may run more than once per event** (retry, lease recovery,
+  replay). Keep them idempotent and side-effect free, and keep thrown messages free of
+  personal data: they are stored as `last_error` and emitted on `settled`.
+- Calls run one at a time per event, so a batch can take up to `batchMax × enrichments per
+  event × enrichTimeoutMs`; keep that under `leaseMs` (defaults: 100 × 1 × 5 s vs 600 s).
+- `relay.on('enrich', e => …)` reports each call as `{ routeId, id, field, enrichment,
+  result: applied | omitted | failed | rejected, error? }` — names only, never values.
+- `relay.preview(route, sample)` does not run enrichments; it lists their fields in
+  `report.enriched` and `pending`.
+
 What your framework must do because the engine cannot:
 
 - **Hand over the raw body.** Signature verification and the stored payload operate on the
@@ -106,8 +170,8 @@ let expire. A random id works too; a crashed replica's batch then waits out `lea
 ## Observability
 
 `relay.on(event, handler)` delivers metadata-only events: `ingest`, `stored`, `settled`,
-`forward`, `delivered`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads are never
-included.
+`forward`, `delivered`, `enrich`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads
+and enriched values are never included.
 The application drives its Prometheus metrics and call-home from these; the engine itself
 never phones home.
 
@@ -116,7 +180,8 @@ never phones home.
 - `relay.control.setKillswitch('pause' | 'panic' | 'none')`, `setRoutePaused(id, bool)`.
 - `relay.store` with `EventStoreAdmin` (SQLite and memory stores have it): `list`, `getById`,
   `replay`, `replayAllParked`, `countByStatus`, `perRouteStats`.
-- `relay.preview(route, samplePayload)` shows exactly what would leave your network.
+- `relay.preview(route, samplePayload)` shows exactly what would leave your network, with
+  enriched fields listed as pending rather than computed.
 - `relay.readPayload(id)` decrypts a buffered payload. Audit it yourself.
 - Retention (`retention: { deliveredDays, ledgerDays }`, or `false`) runs hourly under
   `start()` or on `dispatchOnce({ prune: true })` / `relay.prune()`.

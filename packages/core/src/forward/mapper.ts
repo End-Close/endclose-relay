@@ -1,9 +1,10 @@
 import { createHmac } from 'node:crypto'
 import {
+  refEnrichment,
   refSource,
   refTransforms,
   type DateRef,
-  type FieldRef,
+  type EnrichableFieldRef,
   type RouteConfig,
   type TransformName,
 } from '../config/schema.js'
@@ -26,8 +27,20 @@ export interface MapReport {
   /** output field -> source path (values marked when transformed) */
   mapped: Record<string, string>
   hashed: string[]
+  /** output fields whose value comes from a host enrichment, filled at dispatch time */
+  enriched: string[]
   /** payload leaf paths that do NOT leave the network */
   not_forwarded: string[]
+}
+
+/** An enriched field mapEvent could not fill: the dispatcher runs the host function. */
+export interface PendingEnrichment {
+  /** "metadata.<key>" or "description" */
+  field: string
+  enrichment: string
+  /** The source value after transforms; what the enrichment receives. */
+  input: Json
+  source: string
 }
 
 export class MappingError extends Error {}
@@ -74,7 +87,7 @@ function applyTransform(name: TransformName, value: Json, maskingKey: Buffer): J
   return name === 'trim' ? value.trim() : value.toLowerCase()
 }
 
-function resolve(ref: FieldRef, payload: Json, maskingKey: Buffer): Json | undefined {
+function resolve(ref: EnrichableFieldRef, payload: Json, maskingKey: Buffer): Json | undefined {
   let value = getAtPath(payload, refSource(ref))
   if (value === undefined) return undefined
   for (const t of refTransforms(ref)) value = applyTransform(t, value, maskingKey)
@@ -86,8 +99,10 @@ function dateSource(ref: DateRef): { source: string; format: 'iso8601' | 'mdy_hm
 }
 
 export interface MappedEvent {
+  /** Enriched fields are absent here until the dispatcher fills them. */
   record: EndCloseRecord
   report: MapReport
+  pending: PendingEnrichment[]
 }
 
 /**
@@ -103,15 +118,25 @@ export function mapEvent(
   maskingKey: Buffer,
 ): MappedEvent {
   const { map: m } = route
-  const report: MapReport = { mapped: {}, hashed: [], not_forwarded: [] }
+  const report: MapReport = { mapped: {}, hashed: [], enriched: [], not_forwarded: [] }
+  const pending: PendingEnrichment[] = []
   const usedPaths = new Set<string>()
 
-  const use = (field: string, ref: FieldRef): Json | undefined => {
+  const use = (field: string, ref: EnrichableFieldRef): Json | undefined => {
     const value = resolve(ref, payload, maskingKey)
     if (value === undefined) return undefined
-    report.mapped[field] = refSource(ref)
+    const source = refSource(ref)
+    usedPaths.add(source)
+    const enrichment = refEnrichment(ref)
+    if (enrichment !== undefined) {
+      // The host fills this field later; the record leaves here without it.
+      report.mapped[field] = `${source} → enrich:${enrichment}`
+      report.enriched.push(field)
+      pending.push({ field, enrichment, input: value, source })
+      return undefined
+    }
+    report.mapped[field] = source
     if (refTransforms(ref).includes('hash')) report.hashed.push(field)
-    usedPaths.add(refSource(ref))
     return value
   }
 
@@ -161,6 +186,6 @@ export function mapEvent(
     (leaf) => !usedPaths.has(leaf) && !wildcardPrefixes.some((re) => re.test(leaf)),
   )
 
-  return { record, report }
+  return { record, report, pending }
 }
 
