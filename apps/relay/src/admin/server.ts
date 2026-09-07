@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
+import rateLimit from '@fastify/rate-limit'
 import { timingSafeEqual } from 'node:crypto'
 import { existsSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -64,6 +65,11 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
   const secrets = deps.secrets ?? envSecrets()
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
+  // Every admin route touches the database or the filesystem. The plane is host-local
+  // and basic-auth protected, and failed authentications are already delayed below; a
+  // per-client ceiling on top bounds what a leaked credential or a misbehaving script
+  // can do. Generous enough for the UI's 5 s polling plus relayctl bursts.
+  app.register(rateLimit, { max: 300, timeWindow: '1 minute' })
   const mode = deps.mode ?? 'running'
   // Mounts don't change at runtime; check once. false = data dir sits on the container's
   // ephemeral layer — everything is lost on restart, and the UI warns loudly.

@@ -26,6 +26,7 @@
   "dependencies": {
     "@endclose/relay": "workspace:*",
     "@endclose/relay-sqlite": "workspace:*",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.2",
     "fastify": "^5.12.3",
     "pino": "^9.6.0",
