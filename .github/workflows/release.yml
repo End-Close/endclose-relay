@@ -85,17 +85,15 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
-      # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10. pnpm hands the actual
-      # upload to an npm binary, so install a newer one into its own prefix (letting npm 10
-      # overwrite itself in place fails half-way: "Cannot find module 'promise-retry'") and
-      # point pnpm at it explicitly via its npm-path setting. Prepending PATH is not enough:
-      # under pnpm/action-setup, pnpm resolved the npm next to the toolcache node (10.9.7),
-      # which has no OIDC support and failed with a bare ENEEDAUTH (v0.12.1, v0.12.2).
+      # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10. Install a newer npm into
+      # its own prefix (letting npm 10 overwrite itself in place fails half-way with "Cannot find
+      # module 'promise-retry'") and publish with it directly — see scripts/publish-npm.sh for why
+      # `pnpm publish` is not used.
       - name: Install npm >= 11.5.1 alongside the bundled one
         run: |
           npm install -g --prefix "$RUNNER_TEMP/npm11" npm@latest
           NPM="$RUNNER_TEMP/npm11/bin/npm"
-          echo "npm_config_npm_path=$NPM" >> "$GITHUB_ENV"
+          echo "NPM=$NPM" >> "$GITHUB_ENV"
           V=$("$NPM" --version); echo "publishing with npm@$V at $NPM"
           node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$V"
       - run: pnpm install --frozen-lockfile
@@ -114,14 +112,7 @@ jobs:
             for (const k of ["sub", "repository", "repository_owner", "repository_visibility", "job_workflow_ref", "workflow_ref", "ref", "environment", "aud"])
               console.log(`${k}: ${claims[k] ?? "(absent)"}`)
           ' "$TOKEN"
-      # Publishes core first (topological order) and skips versions already in the registry, so
-      # re-running this job after a partial failure is safe. --no-git-checks: a tag checkout is a
-      # detached HEAD, which pnpm's branch check would otherwise reject. --provenance is only
-      # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
-      # --provenance=false instead (the manifests deliberately do not force provenance).
-      # On failure, run once more at verbose level: that is where npm explains why the OIDC
-      # exchange was refused (and "npm info using npm@…" confirms which npm pnpm invoked).
-      # The retry is safe because pnpm skips already-published versions.
-      - run: |
-          PUBLISH="pnpm publish -r --filter ./packages/** --access public --provenance --no-git-checks"
-          $PUBLISH || { echo "::group::verbose retry (look for 'oidc' lines)"; npm_config_loglevel=verbose $PUBLISH; }
+      # Packs with pnpm, publishes each tarball with $NPM, skips versions already in the
+      # registry (safe to re-run), and retries a failure at verbose level so npm's reason for
+      # a refused OIDC exchange lands in the log.
+      - run: scripts/publish-npm.sh
