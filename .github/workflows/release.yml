@@ -86,11 +86,20 @@ jobs:
         with:
           node-version-file: .nvmrc
       # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10. pnpm hands the actual
-      # upload to the npm binary on PATH.
-      - run: npm install -g npm@latest && npm --version
+      # upload to the npm binary on PATH. Install the newer npm into its own prefix: letting
+      # npm 10 overwrite itself in place fails half-way ("Cannot find module 'promise-retry'").
+      - name: Install npm >= 11.5.1 alongside the bundled one
+        run: |
+          npm install -g --prefix "$RUNNER_TEMP/npm11" npm@latest
+          echo "$RUNNER_TEMP/npm11/bin" >> "$GITHUB_PATH"
+      - run: |
+          which npm && npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:packages
       # Publishes core first (topological order) and skips versions already in the registry, so
       # re-running this job after a partial failure is safe. --no-git-checks: a tag checkout is a
-      # detached HEAD, which pnpm's branch check would otherwise reject.
+      # detached HEAD, which pnpm's branch check would otherwise reject. --provenance is only
+      # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
+      # --provenance=false instead (the manifests deliberately do not force provenance).
       - run: pnpm publish -r --filter './packages/**' --access public --provenance --no-git-checks
