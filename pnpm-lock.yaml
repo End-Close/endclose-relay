@@ -20,10 +20,10 @@ importers:
 
   apps/relay:
     dependencies:
-      '@endclose/relay':
+      '@end-close/relay':
         specifier: workspace:*
         version: link:../../packages/core
-      '@endclose/relay-sqlite':
+      '@end-close/relay-sqlite':
         specifier: workspace:*
         version: link:../../packages/store-sqlite
       '@fastify/rate-limit':
@@ -45,9 +45,6 @@ importers:
         specifier: ^2.7.0
         version: 2.9.0
     devDependencies:
-      '@endclose/relay-store-contract':
-        specifier: workspace:*
-        version: link:../../packages/store-contract
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@7.3.6(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
@@ -90,7 +87,7 @@ importers:
 
   examples:
     dependencies:
-      '@endclose/relay':
+      '@end-close/relay':
         specifier: workspace:*
         version: link:../packages/core
       yaml:
@@ -119,7 +116,7 @@ importers:
 
   packages/store-contract:
     devDependencies:
-      '@endclose/relay':
+      '@end-close/relay':
         specifier: workspace:*
         version: link:../core
       vitest:
@@ -132,10 +129,10 @@ importers:
         specifier: ^11.10.0
         version: 11.10.0
     devDependencies:
-      '@endclose/relay':
+      '@end-close/relay':
         specifier: workspace:*
         version: link:../core
-      '@endclose/relay-store-contract':
+      '@end-close/relay-store-contract':
         specifier: workspace:*
         version: link:../store-contract
       '@types/better-sqlite3':

@@ -1,7 +1,7 @@
 {
-  "name": "@endclose/relay-examples",
+  "name": "@end-close/relay-examples",
   "version": "0.0.0",
-  "description": "Runnable hosts for the @endclose/relay engine. Not shipped.",
+  "description": "Runnable hosts for the @end-close/relay engine. Not shipped.",
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@endclose/relay": "workspace:*",
+    "@end-close/relay": "workspace:*",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

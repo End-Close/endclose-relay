@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { parse } from 'yaml'
-import { parseRoutes, type RelayConfig } from '@endclose/relay'
+import { parseRoutes, type RelayConfig } from '@end-close/relay'
 
 export interface LoadedConfig {
   config: RelayConfig

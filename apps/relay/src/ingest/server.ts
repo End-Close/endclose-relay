@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import type { IngestResult, Logger, RawRequest } from '@endclose/relay'
+import type { IngestResult, Logger, RawRequest } from '@end-close/relay'
 
 // The application's webhook listener: a thin Fastify shell around the engine's ingest path.
 

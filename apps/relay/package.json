@@ -1,7 +1,7 @@
 {
-  "name": "@endclose/relay-app",
+  "name": "@end-close/relay-app",
   "version": "0.0.0",
-  "description": "The self-hosted End Close relay application: HTTP listeners, admin UI, operator CLI, metrics and telemetry around the @endclose/relay engine. The product version lives in the workspace root package.json.",
+  "description": "The self-hosted End Close relay application: HTTP listeners, admin UI, operator CLI, metrics and telemetry around the @end-close/relay engine. The product version lives in the workspace root package.json.",
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
@@ -24,8 +24,8 @@
     "relayctl": "./dist/cli/relayctl.js"
   },
   "dependencies": {
-    "@endclose/relay": "workspace:*",
-    "@endclose/relay-sqlite": "workspace:*",
+    "@end-close/relay": "workspace:*",
+    "@end-close/relay-sqlite": "workspace:*",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.2",
     "fastify": "^5.12.3",
@@ -34,7 +34,6 @@
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@endclose/relay-store-contract": "workspace:*",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^22.13.0",
     "@types/react": "^19.2.17",

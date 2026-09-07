@@ -1,10 +1,26 @@
 {
-  "name": "@endclose/relay-sqlite",
+  "name": "@end-close/relay-sqlite",
   "version": "0.0.0",
-  "description": "SQLite EventStore and ControlStore for @endclose/relay (rollback journal + synchronous=FULL; safe on network filesystems).",
-  "license": "UNLICENSED",
-  "private": true,
+  "description": "SQLite EventStore and ControlStore for @end-close/relay (rollback journal + synchronous=FULL; safe on network filesystems).",
+  "keywords": [
+    "endclose",
+    "webhook",
+    "relay",
+    "sqlite",
+    "better-sqlite3"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/End-Close/endclose-relay/tree/main/packages/store-sqlite#readme",
+  "bugs": {
+    "url": "https://github.com/End-Close/endclose-relay/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/End-Close/endclose-relay.git",
+    "directory": "packages/store-sqlite"
+  },
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,8 +31,14 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "src"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22.12"
   },
@@ -28,11 +50,11 @@
     "better-sqlite3": "^11.10.0"
   },
   "peerDependencies": {
-    "@endclose/relay": "workspace:*"
+    "@end-close/relay": "workspace:^"
   },
   "devDependencies": {
-    "@endclose/relay": "workspace:*",
-    "@endclose/relay-store-contract": "workspace:*",
+    "@end-close/relay": "workspace:*",
+    "@end-close/relay-store-contract": "workspace:*",
     "@types/better-sqlite3": "^7.6.12"
   }
 }

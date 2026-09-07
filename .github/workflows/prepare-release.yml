@@ -2,7 +2,7 @@ name: Prepare release
 
 # Stage 1 of the release flow: bump the version everywhere it lives and open a
 # release PR. Merging that PR triggers tag-release.yml (stage 2), which tags main and
-# thereby fires release.yml (build and publish the image to ghcr.io).
+# thereby fires release.yml (build and publish the image to ghcr.io and the packages to npm).
 #
 # Authenticates as the endclose-release GitHub App (vars.RELEASE_APP_ID +
 # secrets.RELEASE_APP_PRIVATE_KEY): a short-lived installation token is minted per
@@ -39,6 +39,12 @@ jobs:
         run: |
           VERSION=$(npm version ${{ inputs.bump }} --no-git-tag-version) # prints vX.Y.Z
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # The npm packages ship in lockstep with the product: stamp the same version into
+          # every publishable manifest (release.yml refuses a tag that does not match them all).
+          for d in packages/*/; do (cd "$d" && npm pkg set version="${VERSION#v}"); done
+          if git diff --quiet -- packages/*/package.json; then
+            echo "package manifests were not bumped" >&2; exit 1
+          fi
           # Quick-start compose pins the GHCR image tag; the release gate enforces
           # that it matches, so bump it here too.
           sed -i "s|ghcr.io/end-close/relay:v[0-9][0-9.]*|ghcr.io/end-close/relay:$VERSION|" docker-compose.yaml
@@ -55,4 +61,4 @@ jobs:
           git push -u origin "release/$VERSION"
           gh pr create --base main --head "release/$VERSION" \
             --title "Release $VERSION" \
-            --body "$(printf 'Bumps package.json and the quick-start compose image to %s.\n\nMerging this PR tags main as %s, which publishes the image to ghcr.io/end-close/relay.' "$VERSION" "$VERSION")"
+            --body "$(printf 'Bumps the root and package manifests and the quick-start compose image to %s.\n\nMerging this PR tags main as %s, which publishes the image to ghcr.io/end-close/relay and @end-close/relay, @end-close/relay-sqlite and @end-close/relay-store-contract to npm.' "$VERSION" "$VERSION")"

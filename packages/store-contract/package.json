@@ -1,21 +1,44 @@
 {
-  "name": "@endclose/relay-store-contract",
+  "name": "@end-close/relay-store-contract",
   "version": "0.0.0",
-  "description": "Behavioural test suite every @endclose/relay EventStore implementation must pass (vitest).",
-  "license": "UNLICENSED",
-  "private": true,
+  "description": "Behavioural test suite every @end-close/relay EventStore implementation must pass (vitest).",
+  "keywords": [
+    "endclose",
+    "webhook",
+    "relay",
+    "vitest",
+    "contract-test"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/End-Close/endclose-relay/tree/main/packages/store-contract#readme",
+  "bugs": {
+    "url": "https://github.com/End-Close/endclose-relay/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/End-Close/endclose-relay.git",
+    "directory": "packages/store-contract"
+  },
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "src"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22.12"
   },
@@ -24,11 +47,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "peerDependencies": {
-    "@endclose/relay": "workspace:*",
+    "@end-close/relay": "workspace:^",
     "vitest": ">=3"
   },
   "devDependencies": {
-    "@endclose/relay": "workspace:*",
+    "@end-close/relay": "workspace:*",
     "vitest": "^3.0.9"
   }
 }

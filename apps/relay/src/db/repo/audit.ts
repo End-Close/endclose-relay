@@ -1,4 +1,4 @@
-import type { Db } from '@endclose/relay-sqlite'
+import type { Db } from '@end-close/relay-sqlite'
 
 export class AuditRepo {
   constructor(private db: Db) {}

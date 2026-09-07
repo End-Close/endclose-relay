@@ -132,19 +132,21 @@ the matching `Authorization` header via `webHeaderParameters`.
 
 ## Repository layout
 
-The relay is built from an embeddable engine, published as workspace packages, so the same
-code can run inside a customer's own backend:
+The relay is built from an embeddable engine, published to npm as MIT-licensed packages, so the
+same code can run inside a customer's own backend (the application itself is not open-licensed):
 
 | Package | Contents |
 |---|---|
-| `packages/core` — `@endclose/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, host enrichments (map fields computed by the embedding backend's own code), End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
-| `packages/store-sqlite` — `@endclose/relay-sqlite` | the SQLite event/control store the application uses (safe on EFS/NFS). |
-| `packages/store-contract` — `@endclose/relay-store-contract` | the behavioural test suite every store implementation must pass. |
+| `packages/core` — `@end-close/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, host enrichments (map fields computed by the embedding backend's own code), End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
+| `packages/store-sqlite` — `@end-close/relay-sqlite` | the SQLite event/control store the application uses (safe on EFS/NFS). |
+| `packages/store-contract` — `@end-close/relay-store-contract` | the behavioural test suite every store implementation must pass. |
 | `apps/relay` — the application | boot, admin UI/API, `relayctl`, metrics, telemetry, config versioning. The repo root holds the product version, the Dockerfile, compose and deploy files. |
 
 See [`packages/core/README.md`](packages/core/README.md) for embedding the engine, and
 [`examples/embedded.ts`](examples/embedded.ts) for a dependency-free host on `node:http`.
-The packages are workspace-private for now; publishing them is a separate decision.
+The three packages are published to npm in lockstep with the product version: the release PR
+stamps the version into each manifest, and the `v*` tag publishes them alongside the image (see
+`.github/workflows/release.yml`). CI packs and smoke-installs the tarballs on every PR.
 
 ## Development
 

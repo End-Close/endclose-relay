@@ -4,7 +4,7 @@
 // DB-authoritative) config applies live and "restart pending" isn't a concept the
 // operator has to track. The config document contains routes only.
 
-import { DEFAULT_DISPATCH, DEFAULT_RETENTION, type DispatchSettings, type RetentionSettings } from '@endclose/relay'
+import { DEFAULT_DISPATCH, DEFAULT_RETENTION, type DispatchSettings, type RetentionSettings } from '@end-close/relay'
 
 export interface RuntimeSettings {
   endcloseBaseUrl: string

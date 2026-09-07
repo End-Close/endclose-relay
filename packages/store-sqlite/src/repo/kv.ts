@@ -1,4 +1,4 @@
-import type { Killswitch } from '@endclose/relay'
+import type { Killswitch } from '@end-close/relay'
 import type { Db } from '../db.js'
 
 export type GlobalKillswitch = Killswitch

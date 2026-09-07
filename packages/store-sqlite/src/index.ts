@@ -1,4 +1,4 @@
-// @endclose/relay-sqlite — SQLite storage for the End Close relay engine.
+// @end-close/relay-sqlite — SQLite storage for the End Close relay engine.
 export { openDb, type Db } from './db.js'
 export { migrate, MIGRATIONS, type Migration } from './migrations.js'
 export { withBusyRetry, isSqliteBusy } from './busy.js'

@@ -1,10 +1,27 @@
 {
-  "name": "@endclose/relay",
+  "name": "@end-close/relay",
   "version": "0.0.0",
   "description": "Embeddable store-and-forward engine for delivering payment-processor webhooks to End Close: verify, buffer durably, map through an explicit allowlist, forward with retries and idempotency.",
-  "license": "UNLICENSED",
-  "private": true,
+  "keywords": [
+    "endclose",
+    "webhook",
+    "relay",
+    "store-and-forward",
+    "payabli",
+    "payments"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/End-Close/endclose-relay/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/End-Close/endclose-relay/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/End-Close/endclose-relay.git",
+    "directory": "packages/core"
+  },
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,8 +32,15 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "src",
+    "COMPATIBILITY.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22.12"
   },

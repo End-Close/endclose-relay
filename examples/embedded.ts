@@ -2,7 +2,7 @@
 // in-memory store, dispatching once per second. From the repo root:
 //
 //   pnpm build:packages
-//   ENDCLOSE_API_KEY=... PAYABLI_WEBHOOK_SECRET='Bearer x' pnpm --filter @endclose/relay-examples embedded
+//   ENDCLOSE_API_KEY=... PAYABLI_WEBHOOK_SECRET='Bearer x' pnpm --filter @end-close/relay-examples embedded
 //
 // Then POST a Payabli fixture:
 //   curl -X POST localhost:9000/webhooks/payabli-settlements -H 'authorization: Bearer x' \
@@ -13,7 +13,7 @@
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { parse } from 'yaml'
-import { createRelay, parseRoutes, envSecrets, memoryStore, consoleLogger, type Enrichment } from '@endclose/relay'
+import { createRelay, parseRoutes, envSecrets, memoryStore, consoleLogger, type Enrichment } from '@end-close/relay'
 
 // Stand-in for the host's own database: payer id → resident. In a real backend this is
 // a query; the engine never sees the connection and makes no call of its own.
