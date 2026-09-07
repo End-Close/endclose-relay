@@ -10,6 +10,7 @@ import {
 } from '@endclose/relay-sqlite'
 import {
   createRelay,
+  DEFAULT_DISPATCH,
   envSecrets,
   RelayHooks,
   type DispatchSettings,
@@ -66,15 +67,7 @@ export function testConfig(ecPort = 9999) {
 
 /** Fast dispatch settings for tests (poll 50ms, backoff 20→200ms). */
 export function testDispatch(): DispatchSettings {
-  return {
-    batchMax: 100,
-    pollIntervalMs: 50,
-    backoffBaseMs: 20,
-    backoffCapMs: 200,
-    parkAfterMs: 7 * 24 * 3600 * 1000,
-    leaseMs: 600_000,
-    recoverIntervalMs: 60_000,
-  }
+  return { ...DEFAULT_DISPATCH, pollIntervalMs: 50, backoffBaseMs: 20, backoffCapMs: 200 }
 }
 
 /** An engine over the test database, pointed at a mock End Close on `ecPort`. Not started. */

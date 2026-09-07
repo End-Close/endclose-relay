@@ -1,6 +1,7 @@
+import type { Killswitch } from '@endclose/relay'
 import type { Db } from '../db.js'
 
-export type GlobalKillswitch = 'none' | 'pause' | 'panic'
+export type GlobalKillswitch = Killswitch
 
 /** kv key prefix for per-route pause flags: `route_paused.<routeId>` = '1'. */
 export const ROUTE_PAUSED_PREFIX = 'route_paused.'

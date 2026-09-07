@@ -13,14 +13,14 @@ const AUTH = { authorization: 'Basic ' + Buffer.from('admin:hunter2').toString('
 
 describe('admin API', () => {
   let setup: ReturnType<typeof setupDb>
-  let admin: ReturnType<typeof buildAdminServer>
+  let admin: Awaited<ReturnType<typeof buildAdminServer>>
   let ingest: ReturnType<typeof buildIngestServer>
   let events: EventsRepo
 
   beforeEach(async () => {
     setup = setupDb()
     events = new EventsRepo(setup.db)
-    admin = buildAdminServer({
+    admin = await buildAdminServer({
       db: setup.db,
       dbPath: ':memory:',
       startedAt: Date.now(),
@@ -230,6 +230,41 @@ describe('admin API', () => {
   })
 })
 
+describe('admin rate limiting', () => {
+  it('answers 429 past the ceiling, counts unauthenticated attempts, exempts /healthz', async () => {
+    const setup = setupDb()
+    const admin = await buildAdminServer({
+      db: setup.db,
+      dbPath: ':memory:',
+      startedAt: Date.now(),
+      basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY,
+      dataKey: DATA_KEY,
+      rateLimitMax: 3,
+    })
+    await admin.ready()
+    const auth = { authorization: 'Basic ' + Buffer.from('admin:hunter2').toString('base64') }
+    const codes: number[] = []
+    for (let i = 0; i < 4; i++) codes.push((await admin.inject({ method: 'GET', url: '/status', headers: auth })).statusCode)
+    expect(codes).toEqual([200, 200, 200, 429])
+    // Liveness is never throttled.
+    expect((await admin.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200)
+    // Brute force counts against the same ceiling: the limiter runs before auth.
+    const admin2 = await buildAdminServer({
+      db: setup.db, dbPath: ':memory:', startedAt: Date.now(), basicAuth: 'admin:hunter2',
+      maskingKey: MASKING_KEY, dataKey: DATA_KEY, rateLimitMax: 2,
+    })
+    await admin2.ready()
+    const bad = { authorization: 'Basic ' + Buffer.from('admin:nope').toString('base64') }
+    const c2: number[] = []
+    for (let i = 0; i < 3; i++) c2.push((await admin2.inject({ method: 'GET', url: '/status', headers: bad })).statusCode)
+    expect(c2).toEqual([401, 401, 429])
+    await admin.close()
+    await admin2.close()
+    setup.db.close()
+  })
+})
+
 describe('config store resolution', () => {
   it('uses the stored config when present; seed is a no-op', async () => {
     const { db } = setupDb() // setupDb saved version 1
@@ -279,7 +314,7 @@ describe('recovery mode (stored config invalid)', () => {
       'INSERT INTO config_versions (applied_at, config_hash, config_yaml, applied_by) VALUES (?, ?, ?, ?)',
     ).run(new Date().toISOString(), 'sha256:old', badYaml, 'seed')
 
-    const admin = buildAdminServer({
+    const admin = await buildAdminServer({
       db,
       dbPath: ':memory:',
       startedAt: Date.now(),
@@ -324,7 +359,7 @@ describe('recovery mode (stored config invalid)', () => {
     const db = openDb(':memory:')
     migrate(db)
     new KvRepo(db).setGlobalKillswitch('panic')
-    const admin = buildAdminServer({
+    const admin = await buildAdminServer({
       db,
       dbPath: ':memory:',
       startedAt: Date.now(),
@@ -355,7 +390,7 @@ describe('bootstrap mode', () => {
     const db = openDb(':memory:')
     migrate(db)
     let applied = 0
-    const admin = buildAdminServer({
+    const admin = await buildAdminServer({
       db,
       dbPath: ':memory:',
       startedAt: Date.now(),
@@ -395,7 +430,7 @@ describe('bootstrap mode', () => {
 
   it('running mode reports mode and healthz without auth', async () => {
     const setup = setupDb()
-    const admin = buildAdminServer({
+    const admin = await buildAdminServer({
       db: setup.db,
       dbPath: ':memory:',
       startedAt: Date.now(),

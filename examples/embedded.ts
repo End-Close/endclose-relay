@@ -1,25 +1,28 @@
 // Minimal embedding with nothing but Node built-ins: the engine mounted on node:http with an
-// in-memory store, dispatching once per second. Run from the repo root after
-// `pnpm build:packages`:
+// in-memory store, dispatching once per second. From the repo root:
 //
-//   ENDCLOSE_API_KEY=... PAYABLI_WEBHOOK_SECRET='Bearer x' pnpm exec tsx examples/embedded.ts
+//   pnpm build:packages
+//   ENDCLOSE_API_KEY=... PAYABLI_WEBHOOK_SECRET='Bearer x' pnpm --filter @endclose/relay-examples embedded
 //
 // Then POST a Payabli fixture:
 //   curl -X POST localhost:9000/webhooks/payabli-settlements -H 'authorization: Bearer x' \
-//        --data-binary @test/fixtures/payabli-settlement-funded.json
+//        --data-binary @apps/relay/test/fixtures/payabli-settlement-funded.json
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { parse } from 'yaml'
 import { createRelay, parseRoutes, envSecrets, memoryStore, consoleLogger } from '@endclose/relay'
 
 const relay = createRelay({
-  routes: parseRoutes(parse(readFileSync('relay.example.yaml', 'utf8'))).map((r) => ({
+  routes: parseRoutes(parse(readFileSync(new URL('../relay.example.yaml', import.meta.url), 'utf8'))).map((r) => ({
     ...r,
     auth: { ...r.auth, allowed_ips: [] }, // the example config pins Payabli's egress IP
   })),
   store: memoryStore(),
   secrets: envSecrets(process.env),
-  endclose: { apiKey: process.env.ENDCLOSE_API_KEY ?? '', baseUrl: process.env.ENDCLOSE_BASE_URL },
+  endclose: {
+    apiKey: process.env.ENDCLOSE_API_KEY ?? '',
+    ...(process.env.ENDCLOSE_BASE_URL ? { baseUrl: process.env.ENDCLOSE_BASE_URL } : {}),
+  },
   encryption: 'none',
   maskingKey: 'example-masking-key-not-a-secret',
   logger: consoleLogger,

@@ -4,29 +4,22 @@
 // DB-authoritative) config applies live and "restart pending" isn't a concept the
 // operator has to track. The config document contains routes only.
 
-import { hostname } from 'node:os'
-import { DEFAULT_DISPATCH, DEFAULT_RETENTION } from '@endclose/relay'
+import { DEFAULT_DISPATCH, DEFAULT_RETENTION, type DispatchSettings, type RetentionSettings } from '@endclose/relay'
 
 export interface RuntimeSettings {
   endcloseBaseUrl: string
-  /** Lease owner for claimed batches. Unique per running task; stable across restarts of the same container. */
+  /**
+   * Lease owner recorded on claimed batches. The application is deployed single-writer, so
+   * a fixed id lets a replacement task reclaim its predecessor's in-flight batch at boot
+   * instead of waiting out the lease. Set RELAY_INSTANCE_ID uniquely per replica if more
+   * than one writer ever shares a store.
+   */
   instanceId: string
   ingest: { port: number; host: string }
   admin: { port: number; host: string }
   metrics: { port: number; host: string }
-  dispatch: {
-    batch_max: number
-    poll_interval_ms: number
-    backoff_base_ms: number
-    backoff_cap_ms: number
-    park_after_ms: number
-    lease_ms: number
-    recover_interval_ms: number
-  }
-  retention: {
-    delivered_days: number
-    ledger_days: number
-  }
+  dispatch: DispatchSettings
+  retention: RetentionSettings
   telemetry: { enabled: boolean }
 }
 
@@ -44,8 +37,7 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
   return {
     // Override for staging/testing: ENDCLOSE_BASE_URL=https://api-staging.endclose.com/v1
     endcloseBaseUrl: env.ENDCLOSE_BASE_URL || 'https://api.endclose.com/v1',
-    // Container hostname = container id on Docker/ECS: unique per task, stable across restarts.
-    instanceId: env.RELAY_INSTANCE_ID || hostname(),
+    instanceId: env.RELAY_INSTANCE_ID || 'relay',
     ingest: {
       port: int(env, 'RELAY_INGEST_PORT', 8443),
       host: env.RELAY_INGEST_HOST || '0.0.0.0',
@@ -59,17 +51,17 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       host: env.RELAY_METRICS_HOST || '0.0.0.0',
     },
     dispatch: {
-      batch_max: int(env, 'RELAY_BATCH_MAX', DEFAULT_DISPATCH.batchMax),
-      poll_interval_ms: int(env, 'RELAY_POLL_INTERVAL_MS', DEFAULT_DISPATCH.pollIntervalMs),
-      backoff_base_ms: int(env, 'RELAY_BACKOFF_BASE_MS', DEFAULT_DISPATCH.backoffBaseMs),
-      backoff_cap_ms: int(env, 'RELAY_BACKOFF_CAP_MS', DEFAULT_DISPATCH.backoffCapMs),
-      park_after_ms: int(env, 'RELAY_PARK_AFTER_MS', DEFAULT_DISPATCH.parkAfterMs),
-      lease_ms: int(env, 'RELAY_LEASE_MS', DEFAULT_DISPATCH.leaseMs),
-      recover_interval_ms: int(env, 'RELAY_RECOVER_INTERVAL_MS', DEFAULT_DISPATCH.recoverIntervalMs),
+      batchMax: int(env, 'RELAY_BATCH_MAX', DEFAULT_DISPATCH.batchMax),
+      pollIntervalMs: int(env, 'RELAY_POLL_INTERVAL_MS', DEFAULT_DISPATCH.pollIntervalMs),
+      backoffBaseMs: int(env, 'RELAY_BACKOFF_BASE_MS', DEFAULT_DISPATCH.backoffBaseMs),
+      backoffCapMs: int(env, 'RELAY_BACKOFF_CAP_MS', DEFAULT_DISPATCH.backoffCapMs),
+      parkAfterMs: int(env, 'RELAY_PARK_AFTER_MS', DEFAULT_DISPATCH.parkAfterMs),
+      leaseMs: int(env, 'RELAY_LEASE_MS', DEFAULT_DISPATCH.leaseMs),
+      recoverIntervalMs: int(env, 'RELAY_RECOVER_INTERVAL_MS', DEFAULT_DISPATCH.recoverIntervalMs),
     },
     retention: {
-      delivered_days: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', DEFAULT_RETENTION.deliveredDays),
-      ledger_days: int(env, 'RELAY_RETENTION_LEDGER_DAYS', DEFAULT_RETENTION.ledgerDays),
+      deliveredDays: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', DEFAULT_RETENTION.deliveredDays),
+      ledgerDays: int(env, 'RELAY_RETENTION_LEDGER_DAYS', DEFAULT_RETENTION.ledgerDays),
     },
     telemetry: { enabled: isTelemetryEnabled(env) },
   }

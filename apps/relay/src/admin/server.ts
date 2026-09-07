@@ -53,11 +53,13 @@ export interface AdminDeps {
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
   telemetry?: Telemetry
+  /** Requests per client per minute before 429 (default 300). */
+  rateLimitMax?: number
   /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
   secrets?: SecretResolver
 }
 
-export function buildAdminServer(deps: AdminDeps): FastifyInstance {
+export async function buildAdminServer(deps: AdminDeps): Promise<FastifyInstance> {
   const events = new EventsRepo(deps.db)
   const routes = new RoutesRepo(deps.db)
   const kv = new KvRepo(deps.db)
@@ -66,17 +68,24 @@ export function buildAdminServer(deps: AdminDeps): FastifyInstance {
 
   const app = Fastify({ logger: false, bodyLimit: 5 * 1024 * 1024 })
   // Every admin route touches the database or the filesystem. The plane is host-local
-  // and basic-auth protected, and failed authentications are already delayed below; a
-  // per-client ceiling on top bounds what a leaked credential or a misbehaving script
-  // can do. Generous enough for the UI's 5 s polling plus relayctl bursts.
-  app.register(rateLimit, { max: 300, timeWindow: '1 minute' })
+  // and basic-auth protected, and failed authentications are delayed below; a per-client
+  // ceiling on top bounds what a leaked credential, a brute-force loop or a runaway script
+  // can do. The plugin attaches to routes declared after it loads, so it is awaited here,
+  // and it runs at onRequest — before the auth check, which therefore lives in preHandler
+  // so unauthenticated attempts are counted too. Generous enough for the UI's 5 s polling
+  // plus relayctl bursts; liveness probes are exempt.
+  await app.register(rateLimit, {
+    max: deps.rateLimitMax ?? 300,
+    timeWindow: '1 minute',
+    allowList: (request) => request.url === '/healthz',
+  })
   const mode = deps.mode ?? 'running'
   // Mounts don't change at runtime; check once. false = data dir sits on the container's
   // ephemeral layer — everything is lost on restart, and the UI warns loudly.
   const persistent = isDbPathPersistent(deps.dbPath)
 
   const expectedAuth = 'Basic ' + Buffer.from(deps.basicAuth, 'utf8').toString('base64')
-  app.addHook('onRequest', async (request, reply) => {
+  app.addHook('preHandler', async (request, reply) => {
     // Liveness stays unauthenticated: it drives the container healthcheck in every mode
     // and reveals only { ok, mode }.
     if (request.url === '/healthz') return

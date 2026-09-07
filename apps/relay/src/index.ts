@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     }
     const metrics = buildMetrics(db, dbPath)
     let restarting = false
-    const admin = buildAdminServer({
+    const admin = await buildAdminServer({
       db,
       dbPath,
       startedAt,
@@ -180,27 +180,16 @@ async function main(): Promise<void> {
     client,
     encryption: { dataKey },
     maskingKey,
-    dispatch: {
-      batchMax: settings.dispatch.batch_max,
-      pollIntervalMs: settings.dispatch.poll_interval_ms,
-      backoffBaseMs: settings.dispatch.backoff_base_ms,
-      backoffCapMs: settings.dispatch.backoff_cap_ms,
-      parkAfterMs: settings.dispatch.park_after_ms,
-      leaseMs: settings.dispatch.lease_ms,
-      recoverIntervalMs: settings.dispatch.recover_interval_ms,
-    },
-    retention: {
-      deliveredDays: settings.retention.delivered_days,
-      ledgerDays: settings.retention.ledger_days,
-    },
+    dispatch: settings.dispatch,
+    retention: settings.retention,
     logger: log,
     instanceId: settings.instanceId,
     hooks,
   })
   relay.start()
 
-  const ingest = buildIngestServer({ ingest: relay.ingest })
-  const admin = buildAdminServer({
+  const ingest = buildIngestServer({ ingest: relay.ingest, logger: log })
+  const admin = await buildAdminServer({
     db,
     dbPath,
     startedAt,

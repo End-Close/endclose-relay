@@ -2,6 +2,7 @@
 
 export { createRelay, parseRoutes, assertKnownSources } from './engine/relay.js'
 export type { Relay, RelayOptions, DispatchOnceResult, FlushResult } from './engine/relay.js'
+export type { DispatchCounts } from './forward/dispatcher.js'
 export { DEFAULT_DISPATCH, DEFAULT_RETENTION } from './engine/settings.js'
 export type { DispatchSettings, RetentionSettings } from './engine/settings.js'
 export type { IngestResult, IngestResultOutcome } from './engine/ingest.js'

@@ -2,8 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
-import { createRelay, parseRoutes } from '../src/index.js'
-import { memoryStore } from '../src/index.js'
+import { createRelay, parseRoutes, memoryStore, StoreUnavailableError, MemoryControlStore } from '../src/index.js'
 import { FIXTURES, TEST_CONFIG_YAML } from './helpers.js'
 
 // The SDK path end to end: no HTTP server, no SQLite, no process environment. A host
@@ -153,6 +152,58 @@ describe('createRelay (embedded engine)', () => {
     expect((await store.getById(id!))?.status).toBe('delivering')
     await new Promise((r) => setTimeout(r, 5))
     expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+  })
+
+  it('flush keeps waiting for another route\'s backoff instead of reporting "paused"', async () => {
+    const { relay, ec } = makeRelay()
+    // Settlements: paused with a pending event. Batches: one event that just failed and
+    // is in backoff. Flush must deliver the batches event, then report the paused rest.
+    await relay.ingest('payabli-settlements', req(settlement))
+    await relay.control.setRoutePaused('payabli-settlements', true)
+    ec.fail(3)
+    await relay.ingest('payabli-batches', req(readFileSync(join(FIXTURES, 'payabli-batch-paid.json'))))
+    const out = await relay.flush({ timeoutMs: 10_000 })
+    expect(out).toMatchObject({ delivered: 1, retried: 1, drained: false, reason: 'paused' })
+    expect(ec.posts.length).toBe(1)
+  })
+
+  it('a periodic sweep never steals a live lease held under its own id', async () => {
+    const store = memoryStore()
+    const relay = createRelay({
+      routes: parseRoutes(parse(TEST_CONFIG_YAML)),
+      store,
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', fetch: fakeEndClose().fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+      dispatch: { recoverIntervalMs: 1 },
+      instanceId: 'shared-id',
+    })
+    await relay.dispatchOnce() // boot reclaim done
+    const { id } = await relay.ingest('payabli-settlements', req(settlement))
+    // Another process using the same id has this row in flight with a live lease.
+    await store.claimDue('payabli-settlements', new Date().toISOString(), 10, { owner: 'shared-id', until: new Date(Date.now() + 60_000).toISOString() })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 0, retried: 0, parked: 0 })
+    expect((await store.getById(id!))?.status).toBe('delivering')
+  })
+
+  it('a store failure anywhere in ingest is classified, never thrown', async () => {
+    const control = new MemoryControlStore()
+    control.getKillswitch = async () => { throw new StoreUnavailableError('database is locked', 'killswitch') }
+    const relay = createRelay({
+      routes: parseRoutes(parse(TEST_CONFIG_YAML)),
+      store: memoryStore(),
+      control,
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', fetch: fakeEndClose().fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+    })
+    const errors: unknown[] = []
+    relay.on('error', (e) => errors.push(e.kind))
+    expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 503, outcome: 'unavailable' })
+    expect(errors).toEqual(['ingest_persist'])
   })
 
   it('flush returns "unroutable" instead of spinning when due events have no route', async () => {

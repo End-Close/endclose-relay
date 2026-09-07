@@ -47,11 +47,14 @@ export interface DispatcherDeps {
   logger?: Logger
 }
 
-/** What one dispatch cycle did, and what it deliberately left alone. */
-export interface CycleSummary {
+export interface DispatchCounts {
   delivered: number
   retried: number
   parked: number
+}
+
+/** What one dispatch cycle did, and what it deliberately left alone. */
+export interface CycleSummary extends DispatchCounts {
   /** Routes that had due events when the cycle started. */
   due: string[]
   /** Due routes the cycle did not touch, and why. */
@@ -61,27 +64,27 @@ export interface CycleSummary {
 }
 
 type Abort = () => boolean
-const NEVER: Abort = () => false
 
 export class Dispatcher {
   private log: Logger
   private hooks: RelayHooks
   private running = false
   private wakeRequested = false
-  // Rows left 'delivering' by a crash are recovered on the first cycle, then periodically
-  // so a long-lived instance also reclaims what a crashed peer left behind.
-  private needsRecover = true
-  private lastRecoverAt = 0
+  // Rows this instance left 'delivering' (a crash, or a failed release) are reclaimed
+  // by owner on the next cycle regardless of lease. Expired leases left by anyone are
+  // swept every recoverIntervalMs, so a long-lived instance also covers crashed peers.
+  private reclaimOwner: string | undefined
+  private lastSweepAt = 0
   private inFlight: Promise<void> = Promise.resolve()
   private pruneWork: Promise<unknown> = Promise.resolve()
   private timer: NodeJS.Timeout | undefined
   private pruneTimer: NodeJS.Timeout | undefined
-  // Counters for the cycle in progress. Cycles are serialised on `inFlight`.
-  private tally = { delivered: 0, retried: 0, parked: 0 }
+  private stopped: Abort = () => !this.running
 
   constructor(private deps: DispatcherDeps) {
     this.log = deps.logger ?? noopLogger
     this.hooks = deps.hooks ?? new RelayHooks()
+    this.reclaimOwner = deps.instanceId
   }
 
   start(): void {
@@ -103,7 +106,7 @@ export class Dispatcher {
    * Errors propagate to the caller (they are also emitted as hooks).
    */
   runOnce(): Promise<CycleSummary> {
-    const run = this.inFlight.then(() => this.cycle(NEVER).catch((err) => {
+    const run = this.inFlight.then(() => this.cycle().catch((err) => {
       this.reportCycleError(err)
       throw err
     }))
@@ -113,7 +116,7 @@ export class Dispatcher {
 
   /** Run retention pruning to completion, serialised with any scheduled prune. */
   pruneNow(): Promise<{ wiped: number; deleted: number }> {
-    const run = this.pruneWork.then(() => this.runPrune(NEVER))
+    const run = this.pruneWork.then(() => this.runPrune())
     this.pruneWork = run.then(() => {}, () => {})
     return run
   }
@@ -131,12 +134,11 @@ export class Dispatcher {
   private wake(): void {
     if (!this.running) return
     this.wakeRequested = true
-    const stopped: Abort = () => !this.running
     this.inFlight = this.inFlight.then(async () => {
       while (this.wakeRequested && this.running) {
         this.wakeRequested = false
         try {
-          await this.cycle(stopped)
+          await this.cycle(this.stopped)
         } catch (err) {
           this.reportCycleError(err)
         }
@@ -150,17 +152,23 @@ export class Dispatcher {
     this.hooks.emit('error', { kind: 'dispatch_cycle', error: err, ...(op ? { op } : {}) })
   }
 
-  private async cycle(abort: Abort): Promise<CycleSummary> {
+  private async cycle(abort: Abort = () => false): Promise<CycleSummary> {
     const now = new Date().toISOString()
-    this.tally = { delivered: 0, retried: 0, parked: 0 }
-    const summary: CycleSummary = { ...this.tally, due: [], skipped: [], halted: false }
+    const summary: CycleSummary = { delivered: 0, retried: 0, parked: 0, due: [], skipped: [], halted: false }
 
-    if (this.needsRecover || Date.now() - this.lastRecoverAt >= this.deps.dispatch.recoverIntervalMs) {
+    const sweepDue = Date.now() - this.lastSweepAt >= this.deps.dispatch.recoverIntervalMs
+    if (this.reclaimOwner !== undefined || sweepDue) {
       try {
-        const recovered = await this.deps.store.recoverDelivering(now, this.deps.instanceId)
-        this.needsRecover = false
-        this.lastRecoverAt = Date.now()
+        // The owner clause is only safe as a one-off (nothing of ours is in flight yet);
+        // the periodic sweep relies on lease expiry alone.
+        const recovered = await this.deps.store.recoverDelivering(now, this.reclaimOwner)
+        this.reclaimOwner = undefined
         if (recovered > 0) this.log.info('recovered in-flight events', { count: recovered })
+        if (sweepDue) {
+          // Same cadence for the other housekeeping write; parkAfterMs is days, not seconds.
+          await this.deps.store.parkExpired(now, this.deps.dispatch.parkAfterMs)
+          this.lastSweepAt = Date.now()
+        }
       } catch (err) {
         this.log.error('recover delivering failed', { error: (err as Error).message })
         this.hooks.emit('error', { kind: 'recover_delivering', error: err })
@@ -172,21 +180,21 @@ export class Dispatcher {
       return summary // pause/panic: buffer, do not forward
     }
 
-    await this.deps.store.parkExpired(now, this.deps.dispatch.parkAfterMs)
-
     summary.due = await this.deps.store.routesWithDueEvents(now)
     for (const routeId of summary.due) {
       if (abort()) break
-      const [paused, route] = await Promise.all([
-        this.deps.control.isRoutePaused(routeId),
+      const [route, paused] = await Promise.all([
         this.deps.routes.get(routeId),
+        this.deps.control.isRoutePaused(routeId),
       ])
-      if (paused) {
-        summary.skipped.push({ routeId, reason: 'paused' })
-        continue
-      }
+      // An unknown route is the stronger condition: a pause flag left behind by a removed
+      // route must not disguise it as merely paused.
       if (!route) {
         summary.skipped.push({ routeId, reason: 'unknown_route' })
+        continue
+      }
+      if (paused) {
+        summary.skipped.push({ routeId, reason: 'paused' })
         continue
       }
 
@@ -196,15 +204,15 @@ export class Dispatcher {
       })
       if (claimed.length === 0) continue
       try {
-        await this.deliverBatch(route, claimed)
+        await this.deliverBatch(route, claimed, summary)
       } finally {
         await this.releaseLeftover(claimed, 'left delivering after batch')
       }
     }
-    return { ...summary, ...this.tally }
+    return summary
   }
 
-  private async deliverBatch(route: RouteConfig, claimed: EventRecord[]): Promise<void> {
+  private async deliverBatch(route: RouteConfig, claimed: EventRecord[], counts: DispatchCounts): Promise<void> {
     const routeId = route.id
     // Map each event independently; unmappable events park without wedging the batch.
     const records: EndCloseRecord[] = []
@@ -223,7 +231,7 @@ export class Dispatcher {
         if (err instanceof MappingError) {
           const reason = `mapping failed: ${err.message}`
           await this.deps.store.markParked([event.id], reason)
-          this.recordParked([event], reason)
+          this.recordParked([event], reason, counts)
           this.log.warn('event parked: mapping failed', {
             route: routeId,
             event_id: event.event_id,
@@ -238,19 +246,19 @@ export class Dispatcher {
     if (records.length === 0) return
 
     try {
-      const summary = await this.postWithRetries(records)
-      await this.settleResults(summary.id, mapped)
+      const accepted = await this.postWithRetries(records)
+      await this.settleResults(accepted.id, mapped, counts)
       this.log.info('batch forwarded', {
         route: routeId,
         events: mapped.length,
-        bulk_request_id: summary.id,
+        bulk_request_id: accepted.id,
       })
-      this.hooks.emit('batch.forwarded', { routeId, events: mapped.length, bulkRequestId: summary.id })
+      this.hooks.emit('batch.forwarded', { routeId, events: mapped.length, bulkRequestId: accepted.id })
     } catch (err) {
       if (err instanceof PermanentHttpError && (err.status === 400 || err.status === 422)) {
         const reason = `${err.message}: ${err.body}`
         await this.deps.store.markParked(mapped.map((e) => e.id), reason)
-        this.recordParked(mapped, reason)
+        this.recordParked(mapped, reason, counts)
         this.log.error('batch parked: permanent rejection', { route: routeId, status: err.status })
         this.hooks.emit('batch.parked', { routeId, status: err.status, events: mapped.length })
       } else {
@@ -260,7 +268,7 @@ export class Dispatcher {
         const next = nextAttemptAt(maxAttempts, this.deps.dispatch.backoffBaseMs, this.deps.dispatch.backoffCapMs)
         const message = (err as Error).message
         await this.deps.store.markFailed(mapped.map((e) => e.id), next, message)
-        this.tally.retried += mapped.length
+        counts.retried += mapped.length
         this.hooks.emit('forward', { routeId, result: 'retried', count: mapped.length })
         for (const e of mapped) this.hooks.emit('settled', { id: e.id, routeId, result: 'retried', error: message })
         this.log.warn('batch delivery failed, will retry', {
@@ -292,7 +300,7 @@ export class Dispatcher {
    * rejected park; everything else is delivered. If results don't settle in time, mark
    * delivered with the bulk_request_id recorded for later inspection.
    */
-  private async settleResults(bulkRequestId: string, mapped: EventRecord[]): Promise<void> {
+  private async settleResults(bulkRequestId: string, mapped: EventRecord[], counts: DispatchCounts): Promise<void> {
     const deliveredAt = new Date().toISOString()
     for (let i = 0; i < RESULT_POLL_ATTEMPTS; i++) {
       let status
@@ -320,17 +328,17 @@ export class Dispatcher {
       const reason = 'rejected by End Close bulk processing'
       await this.deps.store.markParked(parked.map((e) => e.id), reason)
       await this.deps.store.markDelivered(ok.map((e) => e.id), deliveredAt, bulkRequestId)
-      this.recordDelivered(ok, deliveredAt)
-      this.recordParked(parked, reason)
+      this.recordDelivered(ok, deliveredAt, counts)
+      this.recordParked(parked, reason, counts)
       return
     }
     await this.deps.store.markDelivered(mapped.map((e) => e.id), deliveredAt, bulkRequestId)
-    this.recordDelivered(mapped, deliveredAt)
+    this.recordDelivered(mapped, deliveredAt, counts)
   }
 
-  private recordDelivered(events: EventRecord[], deliveredAt: string): void {
+  private recordDelivered(events: EventRecord[], deliveredAt: string, counts: DispatchCounts): void {
     if (events.length === 0) return
-    this.tally.delivered += events.length
+    counts.delivered += events.length
     this.hooks.emit('forward', { routeId: events[0]!.route_id, result: 'delivered', count: events.length })
     for (const e of events) {
       this.hooks.emit('delivered', { routeId: e.route_id, receivedAt: e.received_at, deliveredAt })
@@ -338,9 +346,9 @@ export class Dispatcher {
     }
   }
 
-  private recordParked(events: EventRecord[], reason: string): void {
+  private recordParked(events: EventRecord[], reason: string, counts: DispatchCounts): void {
     if (events.length === 0) return
-    this.tally.parked += events.length
+    counts.parked += events.length
     this.hooks.emit('forward', { routeId: events[0]!.route_id, result: 'parked', count: events.length })
     for (const e of events) {
       this.hooks.emit('settled', { id: e.id, routeId: e.route_id, result: 'parked', error: reason })
@@ -348,13 +356,12 @@ export class Dispatcher {
   }
 
   private schedulePrune(): void {
-    const stopped: Abort = () => !this.running
     // Prune must not block forwarding: failures are logged and emitted, never propagated.
-    this.pruneWork = this.pruneWork.then(() => this.runPrune(stopped)).catch(() => {})
+    this.pruneWork = this.pruneWork.then(() => this.runPrune(this.stopped)).catch(() => {})
   }
 
   /** Bounded batches with a yield between them so ingest and dispatch keep running. */
-  private async runPrune(abort: Abort): Promise<{ wiped: number; deleted: number }> {
+  private async runPrune(abort: Abort = () => false): Promise<{ wiped: number; deleted: number }> {
     const { retention } = this.deps
     if (!retention) return { wiped: 0, deleted: 0 }
     const now = new Date().toISOString()
@@ -391,7 +398,7 @@ export class Dispatcher {
         this.log.warn('released leftover delivering events', { count: n, error })
       }
     } catch (err) {
-      this.needsRecover = true
+      this.reclaimOwner = this.deps.instanceId
       this.log.error('failed to release leftover delivering events', {
         error: (err as Error).message,
         count: ids.length,

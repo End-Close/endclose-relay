@@ -35,7 +35,7 @@ const relay = createRelay({
   encryption: { dataKey: process.env.RELAY_DATA_KEY! },   // or 'none' (be explicit)
   maskingKey: process.env.MASKING_HMAC_KEY!,              // keys the `hash` transform
   logger: myLogger,                          // { debug, info, warn, error }(msg, scalarMeta)
-  instanceId: process.env.HOSTNAME,          // unique per replica; stable across restarts of the same one
+  instanceId: 'api-1',                       // stable per replica: a restart reclaims its own batch at once
 })
 
 // 1. Mount the ingest path in your HTTP framework. Give it the RAW body bytes.
@@ -98,7 +98,10 @@ What your framework must do because the engine cannot:
 
 Any implementation that passes `describeEventStoreContract()` from
 `@endclose/relay-store-contract` works. Claiming is lease-based, so several instances can
-share one store (a SQL store would use `FOR UPDATE SKIP LOCKED` in `claimDue`).
+share one store (a SQL store would use `FOR UPDATE SKIP LOCKED` in `claimDue`). Give each
+long-lived replica a stable, distinct `instanceId`: on boot an instance reclaims batches it
+left `delivering` (a crash), and every `recoverIntervalMs` it sweeps leases other instances
+let expire. A random id works too; a crashed replica's batch then waits out `leaseMs`.
 
 ## Observability
 

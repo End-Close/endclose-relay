@@ -1,10 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import type { IngestResult, RawRequest } from '@endclose/relay'
+import type { IngestResult, Logger, RawRequest } from '@endclose/relay'
 
 // The application's webhook listener: a thin Fastify shell around the engine's ingest path.
 
 export interface IngestDeps {
   ingest(routeId: string, req: RawRequest): Promise<IngestResult>
+  logger?: Logger
 }
 
 export function buildIngestServer(deps: IngestDeps): FastifyInstance {
@@ -19,6 +20,13 @@ export function buildIngestServer(deps: IngestDeps): FastifyInstance {
   // pre-parse application/json bodies.
   app.removeAllContentTypeParsers()
   app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
+
+  // The engine classifies store failures itself; anything that still escapes is a bug,
+  // and the processor must not see its message (it may name paths or SQL state).
+  app.setErrorHandler((err, request, reply) => {
+    deps.logger?.error('ingest handler failed', { url: request.url, error: (err as Error).message })
+    return reply.code(500).send({ error: 'internal error' })
+  })
 
   app.get('/healthz', async () => ({ ok: true }))
 

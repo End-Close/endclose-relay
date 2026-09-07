@@ -1,6 +1,6 @@
 {
   "name": "@endclose/relay-sqlite",
-  "version": "0.11.0",
+  "version": "0.0.0",
   "description": "SQLite EventStore and ControlStore for @endclose/relay (rollback journal + synchronous=FULL; safe on network filesystems).",
   "license": "UNLICENSED",
   "private": true,

@@ -3,14 +3,14 @@ import { randomUUID } from 'node:crypto'
 import { relayConfigSchema, type RelayConfig, type RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
 import { EndCloseClient } from '../forward/endclose-client.js'
-import { Dispatcher, type CycleSummary } from '../forward/dispatcher.js'
+import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
 import { hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
 import { noopLogger, type Logger } from '../logger.js'
 import { sleep } from '../util/strings.js'
-import { aesGcmCodec, plainCodec, type PayloadCodec } from './codec.js'
+import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
@@ -60,11 +60,7 @@ export interface RelayOptions {
   client?: EndCloseClient
 }
 
-export interface DispatchOnceResult {
-  delivered: number
-  retried: number
-  parked: number
-}
+export type DispatchOnceResult = DispatchCounts
 
 export interface FlushResult extends DispatchOnceResult {
   /** True when nothing deliverable remained when flush returned. */
@@ -100,9 +96,6 @@ export interface Relay {
   on<E extends RelayEventName>(name: E, handler: RelayHandler<E>): () => void
   readonly store: EventStore
   readonly control: ControlStore
-  readonly routes: RouteProvider
-  readonly client: EndCloseClient
-  readonly codec: PayloadCodec
 }
 
 function toKey(name: string, v: string | Buffer): Buffer {
@@ -144,6 +137,8 @@ export function parseRoutes(
 
 const FLUSH_POLL_MIN_MS = 50
 const FLUSH_POLL_MAX_MS = 1000
+// Asking for "due" events at this time returns every route holding pending/retry rows.
+const FAR_FUTURE = '9999-12-31T23:59:59.999Z'
 
 export function createRelay(opts: RelayOptions): Relay {
   if (Array.isArray(opts.routes)) assertKnownSources(opts.routes, opts.adapters)
@@ -194,16 +189,10 @@ export function createRelay(opts: RelayOptions): Relay {
     logger,
   })
 
-  const counts = (c: CycleSummary): DispatchOnceResult => ({
-    delivered: c.delivered,
-    retried: c.retried,
-    parked: c.parked,
-  })
-
   const dispatchOnce = async (o: { prune?: boolean } = {}): Promise<DispatchOnceResult> => {
-    const summary = await dispatcher.runOnce()
+    const { delivered, retried, parked } = await dispatcher.runOnce()
     if (o.prune) await dispatcher.pruneNow()
-    return counts(summary)
+    return { delivered, retried, parked }
   }
 
   const flush = async ({ timeoutMs = 30_000 } = {}): Promise<FlushResult> => {
@@ -217,21 +206,23 @@ export function createRelay(opts: RelayOptions): Relay {
       totals.parked += c.parked
       if (c.halted) return { ...totals, reason: 'paused' }
 
-      const status = await store.countByStatus()
-      if ((status['pending'] ?? 0) + (status['retry'] ?? 0) === 0) return { ...totals, drained: true }
-
-      // Due work the cycle left untouched will not clear on its own.
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return { ...totals, reason: 'timeout' }
       const touched = c.delivered + c.retried + c.parked
-      if (touched === 0 && c.due.length > 0 && c.skipped.length === c.due.length) {
-        const allPaused = c.skipped.every((s) => s.reason === 'paused')
+      if (touched > 0) continue // there may be more than one batch's worth; go straight back
+
+      const backlog = await store.routesWithDueEvents(FAR_FUTURE)
+      if (backlog.length === 0) return { ...totals, drained: true }
+      // Backlog confined to routes the cycle deliberately skipped will not clear on its
+      // own. Anything else is waiting on a backoff timer.
+      const skipped = new Map(c.skipped.map((s) => [s.routeId, s.reason]))
+      if (backlog.every((r) => skipped.has(r))) {
+        const allPaused = backlog.every((r) => skipped.get(r) === 'paused')
         return { ...totals, reason: allPaused ? 'paused' : 'unroutable' }
       }
 
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) return { ...totals, reason: 'timeout' }
-      // Backoff timers are what we are waiting on; poll gently.
       await sleep(Math.min(pollMs, remaining))
-      pollMs = touched > 0 ? FLUSH_POLL_MIN_MS : Math.min(pollMs * 2, FLUSH_POLL_MAX_MS)
+      pollMs = Math.min(pollMs * 2, FLUSH_POLL_MAX_MS)
     }
   }
 
@@ -255,8 +246,5 @@ export function createRelay(opts: RelayOptions): Relay {
     on: (name, handler) => hooks.on(name, handler),
     store,
     control,
-    routes,
-    client,
-    codec,
   }
 }

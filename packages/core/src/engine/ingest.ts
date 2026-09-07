@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { EventEmitter } from 'node:events'
-import { StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from './store.js'
+import { StoreError, StoreUnavailableError, type ControlStore, type EventStore, type RouteProvider } from './store.js'
 import type { PayloadCodec } from './codec.js'
 import { adapterFor, hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
@@ -68,9 +68,31 @@ export async function ingestWebhook(
   routeId: string,
   raw: RawRequest,
 ): Promise<IngestResult> {
-  const { store, control, routes, secrets, codec, signal } = deps
   const hooks = deps.hooks ?? new RelayHooks()
   const logger = deps.logger ?? noopLogger
+  try {
+    return await ingestInner(deps, routeId, raw, hooks, logger)
+  } catch (err) {
+    // Any store failure (route lookup, killswitch, insert): 503 when the store says it is
+    // temporarily unavailable so the processor retries, 500 otherwise. Never the raw error.
+    if (!(err instanceof StoreError)) throw err
+    logger.error('ingest store failure', { route: routeId, op: err.op, error: err.message })
+    hooks.emit('error', { kind: 'ingest_persist', error: err, routeId, op: err.op })
+    if (err instanceof StoreUnavailableError) {
+      return { status: 503, body: { error: 'temporarily unavailable' }, outcome: 'unavailable' }
+    }
+    return { status: 500, body: { error: 'internal error' }, outcome: 'persist_failed' }
+  }
+}
+
+async function ingestInner(
+  deps: IngestDeps,
+  routeId: string,
+  raw: RawRequest,
+  hooks: RelayHooks,
+  logger: Logger,
+): Promise<IngestResult> {
+  const { store, control, routes, secrets, codec, signal } = deps
 
   const route = await routes.get(routeId)
   if (!route) return { status: 404, body: { error: 'unknown route' }, outcome: 'unknown_route' }
@@ -140,28 +162,18 @@ export async function ingestWebhook(
     ),
   )
 
-  let inserted
-  try {
-    inserted = await store.insert({
-      route_id: routeId,
-      source: route.source,
-      event_id: eventId,
-      event_type: eventType,
-      payload,
-      payload_iv: iv,
-      headers_json: headersJson,
-      received_at: new Date().toISOString(),
-      status: filtered ? 'dropped_by_filter' : 'pending',
-      idempotency_key: eventIdempotencyKey(route.source, eventId),
-    })
-  } catch (err) {
-    logger.error('ingest persist failed', { route: routeId, error: (err as Error).message })
-    hooks.emit('error', { kind: 'ingest_persist', error: err, routeId })
-    if (err instanceof StoreUnavailableError) {
-      return { status: 503, body: { error: 'temporarily unavailable' }, outcome: 'unavailable' }
-    }
-    return { status: 500, body: { error: 'internal error' }, outcome: 'persist_failed' }
-  }
+  const inserted = await store.insert({
+    route_id: routeId,
+    source: route.source,
+    event_id: eventId,
+    event_type: eventType,
+    payload,
+    payload_iv: iv,
+    headers_json: headersJson,
+    received_at: new Date().toISOString(),
+    status: filtered ? 'dropped_by_filter' : 'pending',
+    idempotency_key: eventIdempotencyKey(route.source, eventId),
+  })
 
   if (inserted.duplicate) {
     ingested('duplicate', eventType)

@@ -6,12 +6,12 @@ import type { AddressInfo } from 'node:net'
 
 describe('relayctl admin client', () => {
   let setup: ReturnType<typeof setupDb>
-  let admin: ReturnType<typeof buildAdminServer>
+  let admin: Awaited<ReturnType<typeof buildAdminServer>>
   let client: AdminClient
 
   beforeEach(async () => {
     setup = setupDb()
-    admin = buildAdminServer({
+    admin = await buildAdminServer({
       db: setup.db,
       dbPath: ':memory:',
       startedAt: Date.now(),

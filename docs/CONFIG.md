@@ -41,7 +41,7 @@ can never sit in the document silently doing nothing.
 | `RELAY_PARK_AFTER_MS` | 7 days | retrying events park (never dropped) after this |
 | `RELAY_LEASE_MS` | `600000` | how long a claimed batch stays reserved before another instance may recover it |
 | `RELAY_RECOVER_INTERVAL_MS` | `60000` | how often a running relay sweeps for expired leases left by a crashed peer |
-| `RELAY_INSTANCE_ID` | container hostname | lease owner recorded on claimed batches; unique per task, stable across restarts of the same container |
+| `RELAY_INSTANCE_ID` | `relay` | lease owner recorded on claimed batches. A replacement task with the same id reclaims its predecessor's in-flight batch at boot instead of waiting out `RELAY_LEASE_MS`; the relay is deployed single-writer, so the fixed default is right. Give each replica a distinct id if more than one ever shares a store |
 | `RELAY_RETENTION_DELIVERED_DAYS` | `7` | payloads of delivered/filtered events wiped after |
 | `RELAY_RETENTION_LEDGER_DAYS` | `30` | their rows (idempotency ledger) deleted after |
 | `RELAY_TELEMETRY` | on | operational call-home to `api.endclose.com` (`off` / `0` / `false` disables). See [SECURITY.md](./SECURITY.md). |

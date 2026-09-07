@@ -93,6 +93,10 @@ export function storeOp(err: unknown): string | undefined {
 export interface EventStore {
   /** Persist a new event; `duplicate: true` when the idempotency key already exists. */
   insert(e: NewEvent): Promise<InsertResult>
+  /**
+   * Routes with `pending`/`retry` events whose next attempt is at or before `now`.
+   * Called with a far-future `now` it answers "which routes hold any backlog at all".
+   */
   routesWithDueEvents(now: string): Promise<string[]>
   /**
    * Atomically select up to `limit` due events for a route (oldest first), mark them
@@ -110,8 +114,6 @@ export interface EventStore {
    * so a restarted instance reclaims its own work immediately — to `retry`.
    */
   recoverDelivering(now: string, owner?: string): Promise<number>
-  /** Row counts by status. Cheap aggregate the engine uses to judge backlog. */
-  countByStatus(): Promise<Record<string, number>>
   /** Park events that have been retrying longer than `maxAgeMs`. */
   parkExpired(now: string, maxAgeMs: number): Promise<number>
   /** One bounded retention step; callers loop until it returns zeros. */
@@ -133,6 +135,7 @@ export interface Lease {
 export interface EventStoreAdmin {
   getById(id: string): Promise<EventRecord | undefined>
   list(filter: { status?: EventStatus; route?: string; limit?: number }): Promise<EventSummary[]>
+  countByStatus(): Promise<Record<string, number>>
   perRouteStats(): Promise<RouteStats[]>
   replay(id: string): Promise<boolean>
   replayAllParked(): Promise<number>

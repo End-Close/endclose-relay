@@ -25,7 +25,7 @@
     "relayctl": "pnpm --filter @endclose/relay-app relayctl",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm build:packages && pnpm --filter @endclose/relay-app typecheck"
+    "typecheck": "pnpm build:packages && pnpm --filter @endclose/relay-app typecheck && pnpm --filter @endclose/relay-examples typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
