@@ -97,9 +97,27 @@ jobs:
           node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm too old for trusted publishing"); process.exit(1) }' "$(npm --version)"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:packages
+      # npm swallows a failed OIDC token exchange and reports a bare ENEEDAUTH. Print the
+      # identity claims GitHub mints for this job so a mismatch with the trusted-publisher
+      # settings on npmjs.com (owner, repository, workflow filename, environment — all
+      # case-sensitive) is visible in the log. Only the claims are printed, never the token.
+      - name: Show the OIDC identity npm will present
+        run: |
+          TOKEN=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" \
+            | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
+          node -e '
+            const claims = JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url").toString())
+            for (const k of ["sub", "repository", "repository_owner", "repository_visibility", "job_workflow_ref", "workflow_ref", "ref", "environment", "aud"])
+              console.log(`${k}: ${claims[k] ?? "(absent)"}`)
+          ' "$TOKEN"
       # Publishes core first (topological order) and skips versions already in the registry, so
       # re-running this job after a partial failure is safe. --no-git-checks: a tag checkout is a
       # detached HEAD, which pnpm's branch check would otherwise reject. --provenance is only
       # valid on a supported CI runner; a manual bootstrap publish from a laptop must pass
       # --provenance=false instead (the manifests deliberately do not force provenance).
-      - run: pnpm publish -r --filter './packages/**' --access public --provenance --no-git-checks
+      # On failure, run once more at verbose level: that is where npm explains why the OIDC
+      # exchange was refused. The retry is safe because pnpm skips already-published versions.
+      - run: |
+          PUBLISH="pnpm publish -r --filter ./packages/** --access public --provenance --no-git-checks"
+          $PUBLISH || { echo "::group::verbose retry (look for 'oidc' lines)"; npm_config_loglevel=verbose $PUBLISH; }
