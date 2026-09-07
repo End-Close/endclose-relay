@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fargate stack ops: ECS Exec, admin URL, task IP, stack delete.
+# Fargate stack ops: ECS Exec, admin URL, task IP, image update, stack delete.
 #
 # Usage:
 #   ./deploy/fargate/ops exec
@@ -7,6 +7,7 @@
 #   ./deploy/fargate/ops admin --open   # also open in the browser (macOS)
 #   ./deploy/fargate/ops ip
 #   ./deploy/fargate/ops task
+#   ./deploy/fargate/ops update-image   # roll to the newest vX.Y.Z on ghcr.io
 #   ./deploy/fargate/ops delete         # delete the CloudFormation stack
 #
 # Defaults (override with flags or env):
@@ -15,10 +16,16 @@
 #   --container / RELAY_CONTAINER                 (default: relay)
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE="${ROOT}/cloudformation.yaml"
+IMAGE_REPO='end-close/relay'
+IMAGE_PREFIX='ghcr.io/end-close/relay'
+
 STACK_DEFAULT='endclose-relay'
 STACK="${RELAY_STACK:-${ENDCLOSE_RELAY_STACK:-$STACK_DEFAULT}}"
 REGION="${RELAY_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
 CONTAINER="${RELAY_CONTAINER:-relay}"
+IMAGE=''
 OPEN_BROWSER=0
 ASSUME_YES=0
 CMD=''
@@ -32,12 +39,14 @@ Commands:
   admin [--open]    Print admin UI URL (http://<private-ip>:8081)
   ip                Print the task private IPv4
   task              Print the running task ARN
+  update-image      Roll to the newest vX.Y.Z on ghcr.io (VPC/subnets/cert/secret from the stack)
   delete [-y]       Delete the CloudFormation stack (EFS is retained)
 
 Options:
   --stack NAME      CloudFormation / ECS cluster+service name (default: ${STACK_DEFAULT})
   --region REGION   AWS region (prompted if omitted)
   --container NAME  Container name (default: relay)
+  --image URI|TAG   With update-image: skip GHCR lookup and deploy this image (tag or full URI)
   --open            With admin: open the URL (macOS \`open\`, else xdg-open)
   -y, --yes         With delete: skip confirmation prompt
   -h, --help        Show this help
@@ -65,7 +74,7 @@ ask() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    exec|admin|ip|task|delete)
+    exec|admin|ip|task|update-image|delete)
       [ -z "$CMD" ] || die "unexpected extra command: $1"
       CMD="$1"
       shift
@@ -73,6 +82,7 @@ while [ $# -gt 0 ]; do
     --stack) STACK="$2"; shift 2 ;;
     --region) REGION="$2"; shift 2 ;;
     --container) CONTAINER="$2"; shift 2 ;;
+    --image) IMAGE="$2"; shift 2 ;;
     --open) OPEN_BROWSER=1; shift ;;
     -y|--yes) ASSUME_YES=1; shift ;;
     -h|--help) usage 0 ;;
@@ -171,6 +181,132 @@ EOF
   fi
 }
 
+# Highest vX.Y.Z from stdin (ignores "latest" and any other non-semver tags).
+highest_semver_tag() {
+  awk '
+    BEGIN { bmaj=-1; bmin=0; bpat=0 }
+    $0 ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ {
+      ver=$0; sub(/^v/, "", ver)
+      n=split(ver, a, ".")
+      maj=a[1]+0; min=a[2]+0; pat=a[3]+0
+      if (maj>bmaj || (maj==bmaj && min>bmin) || (maj==bmaj && min==bmin && pat>bpat)) {
+        bmaj=maj; bmin=min; bpat=pat; best=$0
+      }
+    }
+    END { if (best != "") print best }
+  '
+}
+
+# Tags published to ghcr.io/end-close/relay. Anonymous registry token first;
+# GitHub Packages API via `gh` if the package is private.
+ghcr_version_tags() {
+  local token json tags
+  need curl
+  token="$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${IMAGE_REPO}:pull" 2>/dev/null \
+    | jq -r '.token // empty' || true)"
+  if [ -n "$token" ]; then
+    json="$(curl -fsS -H "Authorization: Bearer ${token}" \
+      "https://ghcr.io/v2/${IMAGE_REPO}/tags/list" 2>/dev/null || true)"
+    tags="$(printf '%s' "$json" | jq -r '.tags[]?' 2>/dev/null || true)"
+    if [ -n "$tags" ]; then
+      printf '%s\n' "$tags"
+      return 0
+    fi
+  fi
+  if command -v gh >/dev/null; then
+    gh api --paginate "orgs/End-Close/packages/container/relay/versions" \
+      --jq '.[] | .metadata.container.tags[]?' 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+resolve_image() {
+  local tag
+  if [ -n "$IMAGE" ]; then
+    case "$IMAGE" in
+      */*:*|*/*@*) ;; # full registry URI
+      *:*) IMAGE="${IMAGE_PREFIX%/*}/$IMAGE" ;; # org/name:tag without registry
+      *) IMAGE="${IMAGE_PREFIX}:$IMAGE" ;;
+    esac
+    return 0
+  fi
+  echo "→ looking up newest version on ghcr.io/${IMAGE_REPO}" >&2
+  tag="$(ghcr_version_tags | highest_semver_tag || true)"
+  [ -n "$tag" ] || die "could not list ghcr.io/${IMAGE_REPO} tags — pass --image ghcr.io/${IMAGE_REPO}:vX.Y.Z"
+  IMAGE="${IMAGE_PREFIX}:${tag}"
+}
+
+# Reuse VPC, subnets, cert, secret, admin CIDR from the live stack; only Image changes
+# (plus any template drift from cloudformation.yaml). EFS and secrets are untouched.
+update_image() {
+  local params_file running_image describe_err describe_rc
+  [ -f "$TEMPLATE" ] || die "template not found: $TEMPLATE"
+  need jq
+  set +e
+  describe_err="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text 2>&1)"
+  describe_rc=$?
+  set -e
+  if [ "$describe_rc" -ne 0 ]; then
+    echo "$describe_err" >&2
+    case "$describe_err" in
+      *expired*|*ExpiredToken*|*reauthenticate*)
+        die "AWS session expired — run: aws login"
+        ;;
+      *"does not exist"*)
+        die "stack not found: $STACK ($REGION) — create it first with ./deploy/fargate/deploy"
+        ;;
+      *)
+        die "cannot load stack $STACK ($REGION)"
+        ;;
+    esac
+  fi
+  resolve_image
+  params_file="$(mktemp)"
+  trap 'rm -f "$params_file"' RETURN
+  aws cloudformation describe-stacks \
+    --region "$REGION" \
+    --stack-name "$STACK" \
+    --query 'Stacks[0].Parameters' --output json \
+    | jq --arg image "$IMAGE" \
+      'map(if .ParameterKey == "Image" then .ParameterValue = $image else . end)' \
+    >"$params_file"
+  running_image="$(aws cloudformation describe-stacks \
+    --region "$REGION" \
+    --stack-name "$STACK" \
+    --query 'Stacks[0].Parameters[?ParameterKey==`Image`].ParameterValue | [0]' \
+    --output text)"
+  [ -n "$running_image" ] && [ "$running_image" != None ] || die "stack $STACK has no Image parameter"
+  echo "→ updating $STACK in $REGION" >&2
+  echo "   image: $running_image → $IMAGE" >&2
+  set +e
+  OUT="$(aws cloudformation update-stack \
+    --region "$REGION" \
+    --stack-name "$STACK" \
+    --template-body "file://${TEMPLATE}" \
+    --capabilities CAPABILITY_IAM \
+    --parameters "file://${params_file}" 2>&1)"
+  RC=$?
+  set -e
+  if [ "$RC" -ne 0 ]; then
+    if echo "$OUT" | grep -qi 'No updates are to be performed'; then
+      echo "→ already on $IMAGE (template unchanged)" >&2
+      return 0
+    fi
+    echo "$OUT" >&2
+    die "update-stack failed"
+  fi
+  echo "→ waiting for UPDATE_COMPLETE" >&2
+  if ! aws cloudformation wait stack-update-complete --region "$REGION" --stack-name "$STACK"; then
+    die "stack update failed — check events: aws cloudformation describe-stack-events --region $REGION --stack-name $STACK"
+  fi
+  echo "→ waiting for ECS service stable" >&2
+  aws ecs wait services-stable \
+    --region "$REGION" \
+    --cluster "$STACK" \
+    --services "$STACK"
+  echo "updated $STACK → $IMAGE" >&2
+}
+
 case "$CMD" in
   task)
     running_task
@@ -207,5 +343,8 @@ case "$CMD" in
     ;;
   delete)
     delete_stack
+    ;;
+  update-image)
+    update_image
     ;;
 esac

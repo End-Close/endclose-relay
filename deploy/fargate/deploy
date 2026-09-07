@@ -328,6 +328,6 @@ Next steps:
   3. Payabli notifications → https://<your-hostname>/ingest/payabli-settlements
      and .../ingest/payabli-batches with Authorization = PAYABLI_WEBHOOK_SECRET.
 
-  4. Upgrade later: re-run with --image ghcr.io/end-close/relay:<new> (same EFS).
+  4. Upgrade later: ./deploy/fargate/ops update-image  (pins the newest vX.Y.Z on GHCR)
 ══════════════════════════════════════════════════════════════════════════════
 EOF
