@@ -1,6 +1,7 @@
 // Typed, metadata-only events the engine emits. Hosts subscribe to drive metrics,
 // telemetry, or their own observability; the engine itself depends on none of them.
-// Payloads carry route ids, counts, timestamps and error kinds — never webhook data.
+// Payloads carry route ids, counts, timestamps, field names and error kinds — never
+// webhook data or enriched values.
 
 export type IngestOutcome =
   | 'accepted'
@@ -11,6 +12,12 @@ export type IngestOutcome =
   | 'rejected_json'
   | 'panic'
 export type ForwardResult = 'delivered' | 'retried' | 'parked'
+/**
+ * applied: the field was filled. omitted: the enrichment returned undefined. failed: it
+ * threw or timed out (the event retries). rejected: its result or the reference was
+ * invalid (the event parks).
+ */
+export type EnrichOutcome = 'applied' | 'omitted' | 'failed' | 'rejected'
 
 export type EngineErrorKind = 'dispatch_cycle' | 'ingest_persist' | 'prune' | 'recover_delivering'
 
@@ -25,6 +32,8 @@ export interface RelayEvents {
   settled: { id: string; routeId: string; result: ForwardResult; error?: string }
   /** One event confirmed delivered; carries the timestamps for lag measurement. */
   delivered: { routeId: string; receivedAt: string; deliveredAt: string }
+  /** One host enrichment call for one field of one event. Names only, never values. */
+  enrich: { routeId: string; id: string; field: string; enrichment: string; result: EnrichOutcome; error?: string }
   'batch.forwarded': { routeId: string; events: number; bulkRequestId: string }
   /** A whole batch was permanently rejected by End Close. */
   'batch.parked': { routeId: string; status: number; events: number }

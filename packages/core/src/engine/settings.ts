@@ -13,6 +13,12 @@ export interface DispatchSettings {
   leaseMs: number
   /** How often a running instance sweeps for expired leases left by crashed peers. */
   recoverIntervalMs: number
+  /**
+   * Upper bound on one `enrich` call. A slower call counts as a transient failure and the
+   * event retries with backoff. Enrichments run one at a time per event, so keep
+   * batchMax × (enrichments per event) × enrichTimeoutMs well under leaseMs.
+   */
+  enrichTimeoutMs: number
 }
 
 export interface RetentionSettings {
@@ -30,6 +36,7 @@ export const DEFAULT_DISPATCH: DispatchSettings = {
   parkAfterMs: 7 * 24 * 3600 * 1000,
   leaseMs: 600_000,
   recoverIntervalMs: 60_000,
+  enrichTimeoutMs: 5_000,
 }
 
 export const DEFAULT_RETENTION: RetentionSettings = { deliveredDays: 7, ledgerDays: 30 }

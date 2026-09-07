@@ -15,7 +15,14 @@ import { noopLogger, type Logger } from '../logger.js'
 import { jsonTopLevelKeys } from '../util/payload-shape.js'
 import { sleep } from '../util/strings.js'
 import { nextAttemptAt } from './backoff.js'
-import { mapEvent, MappingError, type EndCloseRecord } from './mapper.js'
+import { mapEvent, MappingError, type EndCloseRecord, type MappedEvent } from './mapper.js'
+import {
+  EnrichmentError,
+  validateEnrichedValue,
+  withTimeout,
+  type EnrichContext,
+  type Enrichment,
+} from './enrich.js'
 import {
   EndCloseClient,
   PermanentHttpError,
@@ -45,6 +52,8 @@ export interface DispatcherDeps {
   signal: EventEmitter
   hooks?: RelayHooks
   logger?: Logger
+  /** Host functions routes may name with `enrich:`; run per event after mapping. */
+  enrichments?: Record<string, Enrichment>
 }
 
 export interface DispatchCounts {
@@ -214,30 +223,41 @@ export class Dispatcher {
 
   private async deliverBatch(route: RouteConfig, claimed: EventRecord[], counts: DispatchCounts): Promise<void> {
     const routeId = route.id
-    // Map each event independently; unmappable events park without wedging the batch.
+    // Map and enrich each event independently; an event that cannot be mapped parks, one
+    // whose enrichment fails transiently retries, and neither wedges the batch.
     const records: EndCloseRecord[] = []
     const mapped: EventRecord[] = []
     for (const event of claimed) {
       let payloadKeys: string | undefined
       let bodyBytes: number | undefined
+      let stage: 'mapping' | 'enrichment' = 'mapping'
       try {
         const plaintext = this.deps.codec.decode(event.payload, event.payload_iv)
         bodyBytes = plaintext.length
         const payload = JSON.parse(plaintext.toString('utf8')) as Json
         payloadKeys = jsonTopLevelKeys(payload)
-        records.push(mapEvent(route, payload, event.received_at, this.deps.maskingKey).record)
+        const result = mapEvent(route, payload, event.received_at, this.deps.maskingKey)
+        let { record } = result
+        if (result.pending.length > 0) {
+          stage = 'enrichment'
+          record = await this.resolveEnrichments(event, payload, result)
+        }
+        records.push(record)
         mapped.push(event)
       } catch (err) {
-        if (err instanceof MappingError) {
-          const reason = `mapping failed: ${err.message}`
+        if (err instanceof MappingError || err instanceof EnrichmentError) {
+          const reason = `${stage} failed: ${err.message}`
           await this.deps.store.markParked([event.id], reason)
           this.recordParked([event], reason, counts)
-          this.log.warn('event parked: mapping failed', {
+          this.log.warn(`event parked: ${stage} failed`, {
             route: routeId,
             event_id: event.event_id,
             body_bytes: bodyBytes,
             payload_keys: payloadKeys,
           })
+        } else if (stage === 'enrichment') {
+          // The host's lookup threw or timed out: fixable on their side, so retry later.
+          await this.retryOne(event, `enrichment failed: ${(err as Error).message}`, counts)
         } else {
           throw err
         }
@@ -279,6 +299,73 @@ export class Dispatcher {
         })
       }
     }
+  }
+
+  /**
+   * Fill the fields mapEvent left to the host, one enrichment at a time. Throws
+   * EnrichmentError for a bad reference or return value (park); rethrows anything else
+   * the host threw, including a timeout (retry).
+   */
+  private async resolveEnrichments(event: EventRecord, payload: Json, mapped: MappedEvent): Promise<EndCloseRecord> {
+    const routeId = event.route_id
+    const record: EndCloseRecord = { ...mapped.record, metadata: { ...mapped.record.metadata } }
+    for (const { field, enrichment, input } of mapped.pending) {
+      const emit = (result: 'applied' | 'omitted' | 'failed' | 'rejected', error?: string) =>
+        this.hooks.emit('enrich', { routeId, id: event.id, field, enrichment, result, ...(error ? { error } : {}) })
+      const fn = this.deps.enrichments?.[enrichment]
+      if (!fn) {
+        const err = new EnrichmentError(`${field} references unknown enrichment "${enrichment}"`)
+        emit('rejected', err.message)
+        throw err
+      }
+      const ctx: EnrichContext = {
+        routeId,
+        source: event.source,
+        eventId: event.event_id,
+        eventType: event.event_type,
+        receivedAt: event.received_at,
+        field,
+        payload,
+      }
+      let value: Json | undefined
+      try {
+        const returned: unknown = await withTimeout(() => fn(input, ctx), this.deps.dispatch.enrichTimeoutMs)
+        value = validateEnrichedValue(returned, field)
+        if (field === 'description' && value !== undefined && typeof value !== 'string') {
+          throw new EnrichmentError(`enriched description must be a string`)
+        }
+      } catch (err) {
+        const message = (err as Error).message
+        emit(err instanceof EnrichmentError ? 'rejected' : 'failed', `${enrichment}: ${message}`)
+        const wrapped = `${field} (${enrichment}): ${message}`
+        throw err instanceof EnrichmentError
+          ? new EnrichmentError(wrapped, { cause: err })
+          : new Error(wrapped, { cause: err })
+      }
+      if (value === undefined) {
+        emit('omitted')
+        continue
+      }
+      if (field === 'description') record.description = value as string
+      else record.metadata[field.slice('metadata.'.length)] = value
+      emit('applied')
+    }
+    return record
+  }
+
+  /** Schedule one event for redelivery with backoff, leaving the rest of its batch alone. */
+  private async retryOne(event: EventRecord, message: string, counts: DispatchCounts): Promise<void> {
+    const next = nextAttemptAt(event.attempts, this.deps.dispatch.backoffBaseMs, this.deps.dispatch.backoffCapMs)
+    await this.deps.store.markFailed([event.id], next, message)
+    counts.retried += 1
+    this.hooks.emit('forward', { routeId: event.route_id, result: 'retried', count: 1 })
+    this.hooks.emit('settled', { id: event.id, routeId: event.route_id, result: 'retried', error: message })
+    this.log.warn('event enrichment failed, will retry', {
+      route: event.route_id,
+      event_id: event.event_id,
+      error: message,
+      next_attempt_at: next,
+    })
   }
 
   private async postWithRetries(records: EndCloseRecord[]) {

@@ -57,6 +57,8 @@ describe('payabli adapter', () => {
     )
     const batch = { Event: 'PayOutBatchPaid', BatchId: '341' }
     expect(payabliAdapter.extractEventId(batch, req({}), payabliRoute)).toBe('PayOutBatchPaid:341')
+    const transaction = JSON.parse(readFileSync(join(FIXTURES, 'payabli-transaction.json'), 'utf8')) as Json
+    expect(payabliAdapter.extractEventId(transaction, req({}), payabliRoute)).toBe('ApprovedPayment:txn_0a1b2c3d')
   })
   it('falls back to a body hash for unknown events', () => {
     const id = payabliAdapter.extractEventId({ Event: 'Mystery' }, req({}), payabliRoute)

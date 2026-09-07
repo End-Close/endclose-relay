@@ -15,21 +15,50 @@ export type TransformName = z.infer<typeof transformNameSchema>
 //   external_id: transferId
 //   customer_email: { source: CustomerEmail, transform: hash }
 //   customer_email: { source: CustomerEmail, transform: [trim, lowercase, hash] }
+// Strict, so a stray key (a typo, or `enrich` where it is not allowed) is an error
+// rather than silently ignored.
 export const fieldRefSchema = z.union([
   dotPath,
-  z.object({
-    source: dotPath,
-    transform: z.union([transformNameSchema, z.array(transformNameSchema).min(1)]).optional(),
-  }),
+  z
+    .object({
+      source: dotPath,
+      transform: z.union([transformNameSchema, z.array(transformNameSchema).min(1)]).optional(),
+    })
+    .strict(),
 ])
 export type FieldRef = z.infer<typeof fieldRefSchema>
 
-export function refSource(ref: FieldRef): string {
+// Name of an enrichment registered by the host via createRelay({ enrichments }). Only
+// `description` and `metadata` entries may name one: the value at `source` (after any
+// transforms) is handed to the host function and its return value is what is forwarded.
+export const enrichNameSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]*$/, 'enrichment name must be a lowercase snake_case identifier')
+
+//   resident_name: { source: PayorId, enrich: resident_name }
+//   resident_unit: { source: PayorId, transform: trim, enrich: resident_unit }
+export const enrichableFieldRefSchema = z.union([
+  dotPath,
+  z
+    .object({
+      source: dotPath,
+      transform: z.union([transformNameSchema, z.array(transformNameSchema).min(1)]).optional(),
+      enrich: enrichNameSchema.optional(),
+    })
+    .strict(),
+])
+export type EnrichableFieldRef = z.infer<typeof enrichableFieldRefSchema>
+
+export function refSource(ref: EnrichableFieldRef): string {
   return typeof ref === 'string' ? ref : ref.source
 }
-export function refTransforms(ref: FieldRef): TransformName[] {
+export function refTransforms(ref: EnrichableFieldRef): TransformName[] {
   if (typeof ref === 'string' || ref.transform === undefined) return []
   return Array.isArray(ref.transform) ? ref.transform : [ref.transform]
+}
+/** The enrichment a field names, if any. */
+export function refEnrichment(ref: EnrichableFieldRef): string | undefined {
+  return typeof ref === 'string' ? undefined : ref.enrich
 }
 
 const dateRefSchema = z.union([
@@ -78,26 +107,32 @@ export const recordMapSchema = z
     direction: z.enum(['credit', 'debit']),
     // Optional payload timestamp. Absent -> the record is dated by receive time.
     date: dateRefSchema.optional(),
-    description: fieldRefSchema.optional(),
+    description: enrichableFieldRefSchema.optional(),
     currency: z
       .string()
       .regex(/^[A-Za-z]{3}$/)
       .optional(),
     // Extra fields to forward, as output_name: source. Output names are what End Close
     // property definitions see, so choose clean snake_case names.
-    metadata: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), fieldRefSchema).default({}),
+    metadata: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), enrichableFieldRefSchema).default({}),
   })
   .superRefine((map, ctx) => {
     for (const [outputKey, ref] of Object.entries(map.metadata)) {
       const sourceLeaf = refSource(ref).split('.').at(-1)!
+      const hashed = refTransforms(ref).includes('hash')
+      const enriched = refEnrichment(ref) !== undefined
       for (const name of [outputKey, sourceLeaf]) {
-        if (keyNameIsSensitive(name) && !refTransforms(ref).includes('hash')) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['metadata', outputKey],
-            message: `"${name}" matches the hard denylist (cvv/ssn/account number/...); it cannot be forwarded in clear — use transform: hash or remove it`,
-          })
-        }
+        if (!keyNameIsSensitive(name)) continue
+        // `hash` protects the source value. An enriched field forwards whatever the host
+        // returns, so hashing the input does not make a sensitive output name safe.
+        if (hashed && !(enriched && name === outputKey)) continue
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['metadata', outputKey],
+          message: enriched && name === outputKey
+            ? `"${name}" matches the hard denylist (cvv/ssn/account number/...); an enriched field cannot use it as an output name`
+            : `"${name}" matches the hard denylist (cvv/ssn/account number/...); it cannot be forwarded in clear — use transform: hash or remove it`,
+        })
       }
     }
   })
