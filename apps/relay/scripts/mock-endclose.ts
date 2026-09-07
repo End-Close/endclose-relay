@@ -12,6 +12,11 @@ const PORT = Number(process.env.MOCK_EC_PORT ?? 4100)
 const CONFIG_PATH = process.env.MOCK_EC_CONFIG ?? 'dev/relay.dev.yaml'
 let bulkCounter = 0
 
+// Even a dev mock must not echo credentials: say whether a key was presented, never which.
+function apiKeyNote(header: string | string[] | undefined): string {
+  return header ? 'X-API-KEY: present' : 'X-API-KEY: missing'
+}
+
 createServer((req, res) => {
   let data = ''
   req.on('data', (c) => (data += c))
@@ -23,7 +28,7 @@ createServer((req, res) => {
       const body = JSON.parse(data) as { records: unknown[] }
       console.log(
         `\n── bulk request ${id} ── ${body.records.length} record(s)` +
-          ` (X-API-KEY: ${req.headers['x-api-key']}, Idempotency-Key: ${req.headers['idempotency-key']})`,
+          ` (${apiKeyNote(req.headers['x-api-key'])}, Idempotency-Key: ${req.headers['idempotency-key']})`,
       )
       for (const r of body.records) console.log(JSON.stringify(r, null, 2))
       res.statusCode = 202
@@ -36,7 +41,7 @@ createServer((req, res) => {
         return res.end('{"error":"no relay configuration for this key"}')
       }
       const doc = parse(readFileSync(CONFIG_PATH, 'utf8')) as { routes: unknown }
-      console.log(`\n── relay config served from ${CONFIG_PATH} (X-API-KEY: ${req.headers['x-api-key']})`)
+      console.log(`\n── relay config served from ${CONFIG_PATH} (${apiKeyNote(req.headers['x-api-key'])})`)
       res.statusCode = 200
       return res.end(JSON.stringify({ environment: 'development', routes: doc.routes }))
     }
