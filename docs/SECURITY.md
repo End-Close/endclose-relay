@@ -1,7 +1,7 @@
 # endclose-relay — Security Overview
 
 This document is written for the security team reviewing a deployment of endclose-relay
-inside your infrastructure. It describes exactly what the appliance does, what data
+inside your infrastructure. It describes exactly what the application does, what data
 leaves your network, what End Close can and cannot do, and how to verify all of it
 yourself. Where a claim is enforceable by inspection, we say how to inspect it.
 
@@ -32,16 +32,18 @@ unnamed fields are forwarded:
 
 - Each route maps a webhook to a record: date, amount, direction, an external ID, and a
 `metadata` object containing **only** explicitly listed `output_name: source_path`
-entries. Unmapped payload fields never leave the appliance.
+entries. Unmapped payload fields never leave the application.
 - Fields can be forwarded hashed (`transform: hash`): a deterministic HMAC-SHA256 keyed
-by `MASKING_HMAC_KEY`, which **never leaves the appliance**. End Close can match equal
+by `MASKING_HMAC_KEY`, which **never leaves the application**. End Close can match equal
 values across records without ever seeing the raw value.
 - A **non-configurable hard denylist** applies on top of every mapped value: Luhn-valid
 card numbers (PANs) and SSN patterns inside strings are redacted, and config
 validation refuses to map fields whose names indicate card verification codes,
 account/routing numbers, SSNs, passwords, or API keys unless they are hashed. No
-configuration option disables this; it is compiled into the binary
-(`src/mask/defaults.ts`).
+configuration option disables this; it is enforced in code by the engine library the
+application is built from (`@endclose/relay`, `packages/core/src/mask/defaults.ts`). The
+library lives in this repository and the image is built from the same reviewed checkout,
+so the version you audit is the version that runs.
 
 **Verify it yourself:** the admin UI's config tab has a **map preview**: paste a sample
 payload and see the exact record that would be sent, the source of every field, and
@@ -56,10 +58,10 @@ log and the version history.
 |                                                                |                                           |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | Receive the mapped records you configured                      | ✅                                         |
-| See raw webhook payloads, unmapped fields, or hashed originals | ❌ no: End Close never receives them. Operators can decrypt a buffered payload **on the appliance** (admin UI / `relayctl events payload`) — audited locally, never transmitted |
-| Reach into the appliance (any inbound connection)              | ❌ all connections are outbound            |
+| See raw webhook payloads, unmapped fields, or hashed originals | ❌ no: End Close never receives them. Operators can decrypt a buffered payload **on the application** (admin UI / `relayctl events payload`) — audited locally, never transmitted |
+| Reach into the application (any inbound connection)              | ❌ all connections are outbound            |
 | Flip killswitches, change config, or execute anything remotely | ❌ admin plane is host-local, credentialed by you |
-| See your processor credentials or the appliance's keys         | ❌ never transmitted or stored server-side |
+| See your processor credentials or the application's keys         | ❌ never transmitted or stored server-side |
 
 
 The relay makes exactly one kind of outbound connection: HTTPS to
@@ -87,7 +89,7 @@ static setup page on `:8081` naming the offending variable names and answers eve
 else with 503. That page is intentionally unauthenticated: it exists precisely because
 the admin credential may be the thing that's missing, it appears only while the relay
 holds no data and accepts no webhooks, and it discloses nothing but env-var names.
-- **Bootstrap mode:** with env present but no configuration yet (fresh appliance, no
+- **Bootstrap mode:** with env present but no configuration yet (fresh application, no
 seed file), the relay serves only the **authenticated** admin UI in a setup state where
 the initial configuration is entered; ingest is not listening and no webhooks are
 accepted, so there is still no data at risk. After the first apply the process restarts
@@ -133,11 +135,11 @@ and never silently dropped.
 
 All secrets enter as environment variables on the relay container, provided through
 whatever secret-management mechanism you already use: the End Close API key, processor
-webhook secrets, and the two appliance keys. Configuration references secrets **by
+webhook secrets, and the two application keys. Configuration references secrets **by
 env-var name only** — it contains no secret material and is safe to keep in your git. Secrets are never written to the relay's database, logs, or audit
 log. The logging layer only accepts scalar metadata by construction — there is no API
 for logging a payload (shape metadata such as top-level keys may appear at
-`LOG_LEVEL=debug`). Operators may decrypt a buffered webhook **on the appliance** for
+`LOG_LEVEL=debug`). Operators may decrypt a buffered webhook **on the application** for
 debugging; that path is authenticated, audited, and never forwarded to End Close.
 Missing secrets degrade safely: the UI banners any
 config-referenced secret that isn't set, and a missing End Close API key means events
@@ -153,13 +155,13 @@ secrets can live only on the host if that is your policy.
 
 ## Configuration authority
 
-The appliance database is the configuration's source of truth. Every applied config is
+The application database is the configuration's source of truth. Every applied config is
 an **immutable version row** — full YAML, SHA-256 hash, timestamp — and the history is
 retained and browsable in the UI. A `relay.yaml` file is read exactly once, to seed an
-empty appliance; after that no file, image update, or redeploy can alter configuration —
+empty application; after that no file, image update, or redeploy can alter configuration —
 only an authenticated admin request can, and each one appends a version and an audit
 entry. The active config is exportable as YAML at any time (for sign-off records, your
-git, or seeding a replacement appliance). Secrets are not part of configuration: the
+git, or seeding a replacement application). Secrets are not part of configuration: the
 YAML references env-var names only, and the UI can neither display nor set secret
 values — rotating a credential means changing the container's environment through your
 secret-management mechanism and recreating the container.
@@ -179,7 +181,7 @@ remotely by End Close:
 
 Every killswitch flip, config apply, event replay, and **payload view** is written to an
 **append-only audit log** with timestamp and detail — exportable as JSONL from the UI.
-Attribution is instance-level (the appliance records *that* an authenticated admin acted
+Attribution is instance-level (the application records *that* an authenticated admin acted
 and *what* changed); per-person attribution, if you need it, comes from your own access
 records for the admin credential and host. Payload-view audit entries record event id /
 route / status only — never the body.
@@ -210,7 +212,7 @@ reviewed checkout.
 
 - *What data leaves our network?* Only explicitly mapped fields; preview any payload in
 the UI's config tab; hard denylist on top. Buffered raw webhooks can be decrypted for
-local inspection by authenticated operators — they never leave the appliance. The
+local inspection by authenticated operators — they never leave the application. The
 operational call-home (same `api.endclose.com` egress) sends queue gauges, the routes
 config, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin

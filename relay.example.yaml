@@ -1,7 +1,7 @@
 # endclose-relay configuration (first-boot seed)
 #
-# This file is read ONCE, when the appliance database is empty, to seed the initial
-# configuration. After that the config lives in the appliance database (on the data
+# This file is read ONCE, when the application database is empty, to seed the initial
+# configuration. After that the config lives in the application database (on the data
 # volume, versioned) and is managed in the admin UI at :8081 — where you can also
 # export the active config back to YAML at any time.
 #
@@ -10,12 +10,12 @@
 # (secret-manager env injection, an optional .env next to docker-compose.yaml, …).
 #
 # Required env vars:
-#   ENDCLOSE_API_KEY        End Close API key (issued per appliance, environment-scoped)
+#   ENDCLOSE_API_KEY        End Close API key (issued per application, environment-scoped)
 #   PAYABLI_WEBHOOK_SECRET  The exact header value you configure on the Payabli
 #                           notification via webHeaderParameters, e.g. "Bearer <random>"
 #   RELAY_DATA_KEY          32+ chars; encrypts buffered payloads at rest (AES-256-GCM)
 #   MASKING_HMAC_KEY        32+ chars; keys the deterministic `hash` transform.
-#                           Never leaves this appliance.
+#                           Never leaves this application.
 #                           Generate each with e.g. `openssl rand -hex 32` (distinct
 #                           values!) and back them up — data is unreadable without them.
 #   ADMIN_BASIC_AUTH        user:password protecting the admin UI/API (required)

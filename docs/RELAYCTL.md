@@ -89,7 +89,7 @@ relayctl killswitch none         # same as resume
 ### `events`
 
 Browse the buffer, inspect decrypted payloads locally, and replay parked events.
-Payload viewing is audited (`event.view_payload`); bodies never leave the appliance.
+Payload viewing is audited (`event.view_payload`); bodies never leave the application.
 
 ```sh
 relayctl events list

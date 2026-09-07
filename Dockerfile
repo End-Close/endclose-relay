@@ -1,13 +1,19 @@
 FROM node:22-slim AS build
-WORKDIR /app
+WORKDIR /src
 RUN corepack enable pnpm
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Manifests first so dependency installation caches independently of source changes.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages/core/package.json packages/core/
+COPY packages/store-sqlite/package.json packages/store-sqlite/
+COPY packages/store-contract/package.json packages/store-contract/
+COPY apps/relay/package.json apps/relay/
 RUN pnpm install --frozen-lockfile
-COPY tsconfig.json vite.config.ts ./
-COPY src ./src
-COPY ui ./ui
+COPY packages ./packages
+COPY apps/relay ./apps/relay
 RUN pnpm build
-RUN pnpm prune --prod
+# A self-contained production tree for the application: its dist, its dependencies, and
+# the built workspace packages copied in as real modules.
+RUN pnpm --filter @endclose/relay-app deploy --legacy --prod /out/app
 
 FROM node:22-slim
 # vim-tiny (~2 MB) provides `vi` for `relayctl config edit`. The base image ships no
@@ -20,13 +26,13 @@ RUN apt-get update \
     && mkdir -p /var/lib/endclose-relay /etc/endclose-relay \
     && chown relay:relay /var/lib/endclose-relay
 WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./package.json
+# The product version (read by the application at boot) lives in the root manifest.
+COPY --from=build /src/package.json ./package.json
+COPY --from=build /out/app ./app
 # In-container operator CLI (ECS Exec / docker exec). Uses ADMIN_BASIC_AUTH from env.
-RUN printf '%s\n' '#!/bin/sh' 'exec node /app/dist/cli/relayctl.js "$@"' > /usr/local/bin/relayctl \
+RUN printf '%s\n' '#!/bin/sh' 'exec node /app/app/dist/cli/relayctl.js "$@"' > /usr/local/bin/relayctl \
     && chmod 755 /usr/local/bin/relayctl
 USER relay
 ENV NODE_ENV=production RELAY_CONFIG=/etc/endclose-relay/relay.yaml EDITOR=vi
 EXPOSE 8443
-CMD ["node", "dist/index.js"]
+CMD ["node", "app/dist/index.js"]
