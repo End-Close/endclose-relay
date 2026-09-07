@@ -1,6 +1,6 @@
 {
   "name": "@end-close/relay-store-contract",
-  "version": "0.0.0",
+  "version": "0.12.0",
   "description": "Behavioural test suite every @end-close/relay EventStore implementation must pass (vitest).",
   "keywords": [
     "endclose",
