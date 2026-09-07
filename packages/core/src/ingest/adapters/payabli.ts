@@ -29,6 +29,7 @@ function constantTimeEquals(a: string, b: string): boolean {
 const EVENT_ID_PATHS: Record<string, string> = {
   TransferFunded: 'transferId', // payout_batch_settlement_funded
   PayOutBatchPaid: 'BatchId', // payout_batch_paid
+  ApprovedPayment: 'TransactionId', // transaction-level; field names pending the customer's sample
 }
 
 export const payabliAdapter: ProcessorAdapter = {

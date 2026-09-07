@@ -64,6 +64,8 @@ export function toEndCloseClient(src: EndCloseSource): EndCloseClient {
 export interface FetchRemoteConfigOptions {
   /** Host-registered adapters, so routes with their sources validate. */
   adapters?: Record<string, ProcessorAdapter>
+  /** Host-registered enrichments, so `enrich:` references validate. */
+  enrichments?: Record<string, unknown>
   /** Request timeout (default 10 s). */
   timeoutMs?: number
 }
@@ -109,7 +111,10 @@ export async function fetchRemoteConfig(
   try {
     routes = parseRoutes(
       { routes: doc.routes },
-      opts.adapters ? { adapters: opts.adapters } : {},
+      {
+        ...(opts.adapters ? { adapters: opts.adapters } : {}),
+        ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
+      },
     )
   } catch (err) {
     throw new RemoteConfigError(
@@ -162,6 +167,7 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
   const refreshMs = opts.refreshIntervalMs ?? DEFAULT_REMOTE_REFRESH_MS
   const fetchOpts: FetchRemoteConfigOptions = {
     ...(opts.adapters ? { adapters: opts.adapters } : {}),
+    ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   }
 

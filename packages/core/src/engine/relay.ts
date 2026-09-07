@@ -4,6 +4,7 @@ import type { RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
 import { ENDCLOSE_API_URL, EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
+import type { Enrichment } from '../forward/enrich.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
@@ -13,7 +14,7 @@ import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
 import { remoteRoutes } from './remote-config.js'
-import { assertKnownSources } from './routes.js'
+import { assertKnownEnrichments, assertKnownSources } from './routes.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
 import {
   DEFAULT_DISPATCH,
@@ -59,6 +60,14 @@ export interface RelayOptions {
   logger?: Logger | null
   /** Additional processor adapters keyed by route `source`. */
   adapters?: Record<string, ProcessorAdapter>
+  /**
+   * Host functions a route's map may name with `enrich: <name>` on `description` or a
+   * `metadata` entry. Each runs in-process per event after mapping, receives the value at
+   * that field's `source`, and returns what is forwarded (validated like any mapped value).
+   * Throw to retry the event with backoff; throw `EnrichmentError` to park it; return
+   * `undefined` to omit the field. Bounded by `dispatch.enrichTimeoutMs` per call.
+   */
+  enrichments?: Record<string, Enrichment>
   /** Lease owner for claimed batches. Give each long-lived replica a stable id. */
   instanceId?: string
   hooks?: RelayHooks
@@ -97,7 +106,10 @@ export interface Relay {
   flush(opts?: { timeoutMs?: number }): Promise<FlushResult>
   /** Run retention pruning to completion. */
   prune(): Promise<{ wiped: number; deleted: number }>
-  /** Map a sample payload through a route without storing or sending anything. */
+  /**
+   * Map a sample payload through a route without storing or sending anything. Enrichments
+   * are not run: their fields are listed in `report.enriched` and `pending`.
+   */
   preview(route: RouteConfig, sample: Json, receivedAt?: string): MappedEvent
   /** Decode a buffered payload. Sensitive: the caller is responsible for auditing. */
   readPayload(id: string): Promise<Buffer | undefined>
@@ -114,7 +126,7 @@ function toKey(name: string, v: string | Buffer): Buffer {
   return v
 }
 
-export { assertKnownSources, parseRoutes } from './routes.js'
+export { assertKnownSources, assertKnownEnrichments, routeEnrichments, parseRoutes } from './routes.js'
 
 const FLUSH_POLL_MIN_MS = 50
 const FLUSH_POLL_MAX_MS = 1000
@@ -130,12 +142,16 @@ export function createRelay(opts: RelayOptions): Relay {
       opts.endclose.apiKey,
       opts.endclose.fetch ?? fetch,
     )
-  if (Array.isArray(opts.routes)) assertKnownSources(opts.routes, opts.adapters)
+  if (Array.isArray(opts.routes)) {
+    assertKnownSources(opts.routes, opts.adapters)
+    assertKnownEnrichments(opts.routes, opts.enrichments)
+  }
   const routes: RouteProvider =
     opts.routes === undefined
       ? remoteRoutes(client, {
           logger,
           ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
           ...(opts.remoteConfig?.refreshIntervalMs !== undefined
             ? { refreshIntervalMs: opts.remoteConfig.refreshIntervalMs }
             : {}),
@@ -179,6 +195,7 @@ export function createRelay(opts: RelayOptions): Relay {
     signal,
     hooks,
     logger,
+    ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
   })
 
   const dispatchOnce = async (o: { prune?: boolean } = {}): Promise<DispatchOnceResult> => {

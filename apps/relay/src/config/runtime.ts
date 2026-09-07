@@ -60,6 +60,8 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       parkAfterMs: int(env, 'RELAY_PARK_AFTER_MS', DEFAULT_DISPATCH.parkAfterMs),
       leaseMs: int(env, 'RELAY_LEASE_MS', DEFAULT_DISPATCH.leaseMs),
       recoverIntervalMs: int(env, 'RELAY_RECOVER_INTERVAL_MS', DEFAULT_DISPATCH.recoverIntervalMs),
+      // The application registers no enrichments (a library-only feature), so no env knob.
+      enrichTimeoutMs: DEFAULT_DISPATCH.enrichTimeoutMs,
     },
     retention: {
       deliveredDays: int(env, 'RELAY_RETENTION_DELIVERED_DAYS', DEFAULT_RETENTION.deliveredDays),

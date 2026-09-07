@@ -85,6 +85,16 @@ describe('fetchRemoteConfig', () => {
     expect(err.retryable).toBe(retryable)
   })
 
+  it('validates enrich: references against the host-registered enrichments', async () => {
+    const route = { ...(DOC.routes[0] as { map: object }) }
+    route.map = { ...route.map, metadata: { resident_name: { source: 'PayorId', enrich: 'resident_name' } } }
+    const ec = fakeEndClose({ status: 200, body: { routes: [route] } })
+    const src = { apiKey: 'k', fetch: ec.fetchImpl }
+    await expect(fetchRemoteConfig(src)).rejects.toMatchObject({ kind: 'invalid' })
+    const config = await fetchRemoteConfig(src, { enrichments: { resident_name: () => 'x' } })
+    expect(config.routes[0]!.map.metadata['resident_name']).toEqual({ source: 'PayorId', enrich: 'resident_name' })
+  })
+
   it('validates host-registered adapter sources', async () => {
     const doc = { routes: [{ ...(DOC.routes[0] as object), source: 'custom' }] }
     const ec = fakeEndClose({ status: 200, body: doc })
