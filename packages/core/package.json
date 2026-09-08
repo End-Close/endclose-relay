@@ -1,6 +1,6 @@
 {
   "name": "@end-close/relay",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Embeddable store-and-forward engine for delivering payment-processor webhooks to End Close: verify, buffer durably, map through an explicit allowlist, forward with retries and idempotency.",
   "keywords": [
     "endclose",
