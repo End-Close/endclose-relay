@@ -9,7 +9,7 @@ import { migrate } from '../src/db/migrate.js'
 import { RoutesRepo } from '../src/db/repo/routes.js'
 import { listConfigVersions, readActiveConfigRaw, resolveActiveConfig, saveConfig } from '../src/config/store.js'
 import { parseConfig } from '../src/config/load.js'
-import { checkEndClose, remoteConfigToYaml, RemoteConfigManager, REMOTE_ACTOR } from '../src/config/remote.js'
+import { checkEndClose, remoteConfigToYaml, RemoteConfigManager, REMOTE_ACTOR, wasManagedByEndClose } from '../src/config/remote.js'
 import { isRemoteConfigEnabled, loadRuntimeSettings } from '../src/config/runtime.js'
 import { buildAdminServer } from '../src/admin/server.js'
 import { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from './helpers.js'
@@ -116,8 +116,10 @@ describe('checkEndClose', () => {
     expect(new KvRepo(db).get('remote_config.etag')).toMatch(/^"[0-9a-f]{12}"$/)
 
     const raw = readActiveConfigRaw(db)!
-    expect(raw.yamlText).toMatch(/^# Configuration managed by End Close \(environment: sandbox\)/)
+    expect(raw.yamlText).toMatch(/^# Configuration managed by End Close/)
+    expect(raw.yamlText).not.toContain(mock.baseUrl) // provenance stays out of the hashed text
     expect(parseConfig(raw.yamlText).config.routes).toHaveLength(2)
+    expect(wasManagedByEndClose(db)).toBe(true)
     expect(resolveActiveConfig(db, undefined).kind).toBe('ok')
     const audit = db.prepare('SELECT actor, action FROM audit_log').all() as { actor: string; action: string }[]
     expect(audit).toEqual([{ actor: REMOTE_ACTOR, action: 'config.apply' }])
@@ -140,15 +142,17 @@ describe('checkEndClose', () => {
     expect(new RoutesRepo(db).all().map((r) => r.id)).toEqual(['payabli-settlements'])
   })
 
-  it('the stored YAML is deterministic and serializes the document as sent, not the defaults', () => {
+  it('the stored YAML depends on the document alone and serializes it as sent, not the defaults', () => {
     const config: RemoteConfig = {
       routes: parseConfig(TEST_CONFIG_YAML).config.routes,
       document: DOC,
+      environment: 'sandbox',
       etag: '"x"',
       fetchedAt: '2026-09-07T00:00:00.000Z',
     }
-    const a = remoteConfigToYaml(config, 'https://api.endclose.com/v1')
-    const b = remoteConfigToYaml({ ...config, fetchedAt: '2030-01-01T00:00:00.000Z' }, 'https://api.endclose.com/v1')
+    const a = remoteConfigToYaml(config)
+    // A different fetch time, environment name or ETag must not make a new version.
+    const b = remoteConfigToYaml({ ...config, fetchedAt: '2030-01-01T00:00:00.000Z', environment: 'production', etag: '"y"' })
     expect(a).toBe(b)
     expect(a).not.toContain('max_body_bytes')
     expect(a).not.toContain('allowed_ips')
@@ -160,7 +164,15 @@ describe('checkEndClose', () => {
     mock.reply = { status: 404, body: { error: 'not managed' } }
     expect(await checkEndClose(db, opts())).toEqual({ kind: 'unmanaged' })
     expect(new KvRepo(db).get('remote_config.etag')).toBeUndefined()
+    expect(wasManagedByEndClose(db)).toBe(false)
     expect(listConfigVersions(db)).toHaveLength(1) // the last document stays as the local config
+  })
+
+  it('a base URL change does not create a new version for an unchanged document', async () => {
+    await checkEndClose(db, opts())
+    const other = await checkEndClose(db, opts({ baseUrl: 'https://api-staging.endclose.com/v1' }))
+    expect(other).toMatchObject({ kind: 'managed', changed: false })
+    expect(listConfigVersions(db)).toHaveLength(1)
   })
 
   it('a transient failure is retryable; a rejected key is not', async () => {
@@ -239,16 +251,38 @@ describe('checkEndClose', () => {
       expect(seen).toContain('unmanaged')
     })
 
-    it('a transient failure keeps the last ownership answer and reports retrying', async () => {
+    it('a failure of any kind keeps the last ownership answer; only 200/304/404 confirm it', async () => {
       const m = new RemoteConfigManager(db, opts(), noopLogger)
       await m.check()
+      const confirmed = m.snapshot().last_confirmed_at
+      expect(confirmed).not.toBeNull()
+
       mock.reply = { status: 503, body: {} }
       await m.check()
-      expect(m.snapshot()).toMatchObject({ state: 'failed', managed: true })
-      m.start(60_000)
-      expect(m.snapshot().retrying).toBe(true)
+      expect(m.snapshot()).toMatchObject({ state: 'failed', managed: true, retrying: true, last_confirmed_at: confirmed })
       expect(m.shouldPoll).toBe(true)
-      m.stop()
+
+      // Rejected key: still End Close's configuration until it says otherwise; not retrying.
+      mock.reply = { status: 401, body: {} }
+      await m.check()
+      expect(m.snapshot()).toMatchObject({ state: 'failed', managed: true, retrying: false, last_confirmed_at: confirmed })
+      expect(m.snapshot().last_checked_at).not.toBe(confirmed)
+    })
+
+    it('ownership survives a restart: a new manager on a managed database starts locked', async () => {
+      await new RemoteConfigManager(db, opts(), noopLogger).check()
+      const restarted = new RemoteConfigManager(db, opts(), noopLogger)
+      expect(restarted.snapshot()).toMatchObject({ state: 'unknown', managed: true, environment: 'sandbox' })
+      // ...and stays locked while End Close is unreachable at boot.
+      mock.reply = { status: 503, body: {} }
+      await restarted.check()
+      expect(restarted.managed).toBe(true)
+      // A local apply (management off in between) breaks the link.
+      mock.reply = { status: 404, body: {} }
+      await restarted.check()
+      saveConfig(db, TEST_CONFIG_YAML, 'admin', envSecrets(env))
+      expect(new RemoteConfigManager(db, opts(), noopLogger).managed).toBe(false)
+      expect(new RemoteConfigManager(db, opts({ enabled: false }), noopLogger).managed).toBe(false)
     })
   })
 

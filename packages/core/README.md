@@ -113,8 +113,9 @@ const relay = createRelay({
   `not_found` (not managed) and `invalid`.
 
 **Instance manifest.** With `announce` on (the default when routes come from End Close),
-the engine PUTs `/relays/instances/{instanceId}` before the first fetch, on every refresh
-and on `stop()`: `{ schema: 1, reason, host: 'embedded', engine_version, config_schema,
+the engine PUTs `/relays/instances/{instanceId}` before the first fetch (`boot`), on the
+first refresh after each 15-minute heartbeat interval (`heartbeat`) and on `stop()`
+(`shutdown`, bounded to a second): `{ schema: 1, reason, host: 'embedded', engine_version, config_schema,
 config_source: 'remote', capabilities: { adapters, enrichments } }`. That is how End
 Close knows which adapters and enrichment names it may reference when authoring this
 environment's configuration — register first, author second. It carries nothing

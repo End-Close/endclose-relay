@@ -42,11 +42,18 @@ routes:
 // schema, previews the exact outbound record for a sample payload, and saves a new
 // config version. Secrets never appear here — the YAML references env-var names only.
 
-// `managed`: End Close owns the configuration. The document is shown, validated and
-// previewed as usual, but not edited here — changes are made in End Close and arrive
-// within a minute as new versions.
-export default function ConfigTab({ managed = null }: { managed?: RemoteConfigStatus | null }) {
-  const locked = managed !== null
+// `remote`: who owns the configuration. While End Close does, the document is shown,
+// validated and previewed as usual but not edited here — changes are made in End Close
+// and arrive within a minute as new versions. `configHash` is the active hash from the
+// status poll: when it changes underneath (a version applied from End Close), reload.
+export default function ConfigTab({
+  remote = null,
+  configHash = null,
+}: {
+  remote?: RemoteConfigStatus | null
+  configHash?: string | null
+}) {
+  const locked = remote?.managed === true
   const [yaml, setYaml] = useState('')
   const [activeHash, setActiveHash] = useState('')
   const [dirty, setDirty] = useState(false)
@@ -84,6 +91,12 @@ export default function ConfigTab({ managed = null }: { managed?: RemoteConfigSt
     fetchConfigVersions().then(setVersions, () => setVersions([]))
   }
   useEffect(reload, [])
+  useEffect(() => {
+    // A new version arrived from End Close (or another admin session): refresh unless
+    // the operator is mid-edit on an unlocked editor.
+    if (configHash && activeHash && configHash !== activeHash && (locked || !dirty)) reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configHash])
 
   const onValidate = async () => setValidation(await validateConfig(yaml))
 
@@ -175,15 +188,23 @@ export default function ConfigTab({ managed = null }: { managed?: RemoteConfigSt
 
   return (
     <div>
-      {locked && (
+      {locked && remote && (
         <p className="env-warning">
           <strong>Managed by End Close</strong>
-          {managed.environment ? ` (environment: ${managed.environment})` : ''} — this configuration is
+          {remote.environment ? ` (environment: ${remote.environment})` : ''} — this configuration is
           edited in End Close and reaches the relay within a minute. The editor below is read-only;
           validate, preview and download still work.
-          {managed.last_checked_at && (
-            <span className="text-dim"> Last confirmed {fmtAgo(managed.last_checked_at)}.</span>
+          {remote.last_confirmed_at && (
+            <span className="text-dim"> Last confirmed {fmtAgo(remote.last_confirmed_at)}.</span>
           )}
+        </p>
+      )}
+      {remote?.state === 'failed' && (
+        <p className="env-warning">
+          <strong>End Close could not be reached for the configuration</strong> — {remote.error}.{' '}
+          {remote.retrying
+            ? 'The relay keeps asking every minute and runs the configuration it has meanwhile.'
+            : 'Fix the cause (a secret env var named by the configuration, the API key, or the document in End Close); the relay keeps asking every minute.'}
         </p>
       )}
       <p className="text-dim">

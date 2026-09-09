@@ -8,7 +8,7 @@ import {
   type SecretResolver,
 } from '@end-close/relay'
 import { KvRepo, type Db } from '@end-close/relay-sqlite'
-import { parseConfig, type LoadedConfig } from './load.js'
+import type { LoadedConfig } from './load.js'
 import { getActiveConfig, saveConfig } from './store.js'
 
 // Configuration owned by End Close. End Close keeps one routes document per
@@ -23,13 +23,17 @@ import { getActiveConfig, saveConfig } from './store.js'
 //        The relay runs what it has (the last document End Close served, a seed file,
 //        or whatever the editor applies) and keeps asking at the same cadence, so
 //        management switched on later is picked up without a restart.
-// RELAY_REMOTE_CONFIG=off never asks at all. Secrets stay references to env var names.
+// Anything else (unreachable, rejected key, unusable document) changes nothing about
+// who owns the configuration: the last answer stands until a new one arrives, and the
+// error is reported. RELAY_REMOTE_CONFIG=off never asks at all. Secrets stay references
+// to env var names.
 
 export const REMOTE_ACTOR = 'endclose'
 const ETAG_KEY = 'remote_config.etag'
 // The active config hash the ETag describes. A conditional GET is only honest while
 // the stored document is still End Close's: after a local apply (management off, or
 // RELAY_REMOTE_CONFIG toggled) a 304 must not pass a local edit off as End Close's.
+// The pair also records, across restarts, that End Close owned the configuration.
 const HASH_KEY = 'remote_config.hash'
 const ENVIRONMENT_KEY = 'remote_config.environment'
 
@@ -48,7 +52,10 @@ export interface RemoteConfigStatus {
   error: string | null
   /** True while a transient failure is being retried in the background. */
   retrying: boolean
+  /** When End Close last answered at all (including failures). */
   last_checked_at: string | null
+  /** When End Close last answered 200/304/404 — the last time ownership was confirmed. */
+  last_confirmed_at: string | null
 }
 
 export interface RemoteCheckOptions {
@@ -60,25 +67,40 @@ export interface RemoteCheckOptions {
 }
 
 /**
- * Serialize End Close's routes document as the YAML the version history stores. Must be
- * deterministic for a given document: the version hash is the hash of this text, and an
- * unchanged document must not produce a new version on every poll.
+ * Serialize End Close's routes document as the YAML the version history stores. The
+ * version hash is the hash of this text, so it must depend on the document alone: no
+ * timestamps, URLs or environment names in the header, or an unchanged document would
+ * become a new version on every poll or base-URL change.
  */
-export function remoteConfigToYaml(config: RemoteConfig, baseUrl: string): string {
-  const env = config.environment ? ` (environment: ${config.environment})` : ''
+export function remoteConfigToYaml(config: RemoteConfig): string {
   return (
-    `# Configuration managed by End Close${env} — ${baseUrl}/relays/config\n` +
+    `# Configuration managed by End Close (GET /relays/config).\n` +
     `# Edit it in End Close; changes reach this relay within a minute. The local editor\n` +
     `# is locked while End Close manages this environment.\n` +
     stringify(config.document)
   )
 }
 
-/** Ask End Close once. Stores a fetched document; never throws. */
+/** Whether End Close owned the configuration when this database was last written. */
+export function wasManagedByEndClose(db: Db): boolean {
+  const stored = getActiveConfig(db)
+  return stored !== undefined && new KvRepo(db).get(HASH_KEY) === stored.hash
+}
+
+/** Ask End Close once. Stores a fetched document. Never throws. */
 export async function checkEndClose(db: Db, opts: RemoteCheckOptions): Promise<RemoteCheck> {
   if (!opts.enabled) return { kind: 'disabled', reason: 'env' }
   if (!opts.apiKey) return { kind: 'disabled', reason: 'no_api_key' }
+  try {
+    return await checkEndCloseInner(db, opts)
+  } catch (err) {
+    // Store errors on the way in or out (locked database, full volume): the relay keeps
+    // running and asks again next time.
+    return { kind: 'failed', error: `local store error: ${(err as Error).message}`, retryable: true }
+  }
+}
 
+async function checkEndCloseInner(db: Db, opts: RemoteCheckOptions): Promise<RemoteCheck> {
   const kv = new KvRepo(db)
   // A conditional GET only makes sense when the stored document is the one the ETag
   // describes: a missing, invalid or locally replaced stored config fetches in full.
@@ -97,7 +119,7 @@ export async function checkEndClose(db: Db, opts: RemoteCheckOptions): Promise<R
       }
       return { kind: 'failed', error: err.message, retryable: err.retryable }
     }
-    return { kind: 'failed', error: (err as Error).message, retryable: false }
+    throw err
   }
 
   if (config === null) {
@@ -105,20 +127,19 @@ export async function checkEndClose(db: Db, opts: RemoteCheckOptions): Promise<R
     return { kind: 'managed', loaded: stored!, changed: false, ...(environment ? { environment } : {}) }
   }
 
-  const yamlText = remoteConfigToYaml(config, opts.baseUrl)
-  const changed = stored?.hash !== parseConfig(yamlText).hash
+  const yamlText = remoteConfigToYaml(config)
   let loaded: LoadedConfig
   try {
     // saveConfig is a no-op when the hash matches the latest version.
     loaded = saveConfig(db, yamlText, REMOTE_ACTOR, opts.secrets)
   } catch (err) {
-    // Missing secret env vars, or a document this build's schema rejects: the operator
-    // has to act (set the variable / fix it in End Close). No ETag is kept, so the next
-    // check fetches in full and tries again.
+    // A store error is transient. Anything else — a secret env var not set, a document
+    // this build's schema rejects — needs the operator (set the variable) or End Close
+    // (fix the document). No ETag is kept, so the next check fetches in full.
     return {
       kind: 'failed',
       error: `configuration from End Close could not be applied: ${(err as Error).message}`,
-      retryable: false,
+      retryable: isStoreError(err),
     }
   }
   if (config.etag) {
@@ -133,27 +154,25 @@ export async function checkEndClose(db: Db, opts: RemoteCheckOptions): Promise<R
   return {
     kind: 'managed',
     loaded,
-    changed,
+    changed: stored?.hash !== loaded.hash,
     ...(config.environment !== undefined ? { environment: config.environment } : {}),
   }
+}
+
+function isStoreError(err: unknown): boolean {
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' && code.startsWith('SQLITE')
 }
 
 /**
  * Tracks whether End Close owns the configuration and keeps it current. `check()` asks
  * once; `start()` polls at a fixed cadence for as long as asking is enabled — a 404 hands
  * ownership to the local editor but the question keeps being asked, because polling is
- * the only way to learn that management was switched back on.
+ * the only way to learn that management was switched back on. Ownership survives a
+ * restart: until End Close answers, a relay that was managed stays managed.
  */
 export class RemoteConfigManager {
-  private status: RemoteConfigStatus = {
-    state: 'unknown',
-    managed: false,
-    environment: null,
-    error: null,
-    retrying: false,
-    last_checked_at: null,
-  }
-  private retryable = false
+  private status: RemoteConfigStatus
   private timer: NodeJS.Timeout | undefined
   private inFlight: Promise<RemoteCheck> | undefined
 
@@ -161,7 +180,18 @@ export class RemoteConfigManager {
     private db: Db,
     private opts: RemoteCheckOptions,
     private log: Logger,
-  ) {}
+  ) {
+    const managed = opts.enabled && Boolean(opts.apiKey) && wasManagedByEndClose(db)
+    this.status = {
+      state: 'unknown',
+      managed,
+      environment: managed ? (new KvRepo(db).get(ENVIRONMENT_KEY) ?? null) : null,
+      error: null,
+      retrying: false,
+      last_checked_at: null,
+      last_confirmed_at: null,
+    }
+  }
 
   get managed(): boolean {
     return this.status.managed
@@ -173,9 +203,10 @@ export class RemoteConfigManager {
   }
 
   snapshot(): RemoteConfigStatus {
-    return { ...this.status, retrying: this.timer !== undefined && this.status.state === 'failed' && this.retryable }
+    return { ...this.status }
   }
 
+  /** Never rejects. */
   async check(): Promise<RemoteCheck> {
     if (this.inFlight) return this.inFlight
     this.inFlight = checkEndClose(this.db, this.opts)
@@ -194,7 +225,10 @@ export class RemoteConfigManager {
     if (this.timer) return
     this.timer = setInterval(() => {
       if (!this.shouldPoll) return
-      void this.check().then((r) => onCheck?.(r))
+      void this.check().then(
+        (r) => onCheck?.(r),
+        (err: unknown) => this.log.error('End Close configuration check failed unexpectedly', { error: String(err) }),
+      )
     }, intervalMs)
     this.timer.unref()
   }
@@ -216,8 +250,8 @@ export class RemoteConfigManager {
           error: null,
           retrying: false,
           last_checked_at: now,
+          last_confirmed_at: now,
         }
-        this.retryable = false
         if (result.changed) {
           this.log.info('configuration updated from End Close', {
             environment: result.environment ?? null,
@@ -227,25 +261,38 @@ export class RemoteConfigManager {
         }
         break
       case 'unmanaged':
-        this.status = { state: 'unmanaged', managed: false, environment: null, error: null, retrying: false, last_checked_at: now }
-        this.retryable = false
+        this.status = {
+          state: 'unmanaged',
+          managed: false,
+          environment: null,
+          error: null,
+          retrying: false,
+          last_checked_at: now,
+          last_confirmed_at: now,
+        }
         if (wasManaged) this.log.warn('End Close stopped managing this configuration; the local editor is unlocked')
         break
       case 'disabled':
-        this.status = { state: 'disabled', managed: false, environment: null, error: null, retrying: false, last_checked_at: now }
-        this.retryable = false
+        this.status = {
+          state: 'disabled',
+          managed: false,
+          environment: null,
+          error: null,
+          retrying: false,
+          last_checked_at: now,
+          last_confirmed_at: null,
+        }
         break
       case 'failed':
-        // A transient failure does not change who owns the configuration: keep running
-        // (and, if End Close owned it, keep the editor locked) until an answer arrives.
+        // Who owns the configuration is not in question until End Close answers; only
+        // the error and, if it may clear on its own, the retrying flag change.
         this.status = {
           ...this.status,
           state: 'failed',
-          managed: wasManaged && result.retryable,
           error: result.error,
+          retrying: result.retryable,
           last_checked_at: now,
         }
-        this.retryable = result.retryable
         break
     }
   }

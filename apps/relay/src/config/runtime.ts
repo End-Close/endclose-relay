@@ -4,7 +4,13 @@
 // DB-authoritative) config applies live and "restart pending" isn't a concept the
 // operator has to track. The config document contains routes only.
 
-import { DEFAULT_DISPATCH, DEFAULT_RETENTION, type DispatchSettings, type RetentionSettings } from '@end-close/relay'
+import {
+  DEFAULT_DISPATCH,
+  DEFAULT_RETENTION,
+  ENDCLOSE_API_URL,
+  type DispatchSettings,
+  type RetentionSettings,
+} from '@end-close/relay'
 
 export interface RuntimeSettings {
   endcloseBaseUrl: string
@@ -41,7 +47,7 @@ function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): RuntimeSettings {
   return {
     // Override for staging/testing: ENDCLOSE_BASE_URL=https://api-staging.endclose.com/v1
-    endcloseBaseUrl: env.ENDCLOSE_BASE_URL || 'https://api.endclose.com/v1',
+    endcloseBaseUrl: env.ENDCLOSE_BASE_URL || ENDCLOSE_API_URL,
     instanceId: env.RELAY_INSTANCE_ID || 'relay',
     ingest: {
       port: int(env, 'RELAY_INGEST_PORT', 8443),

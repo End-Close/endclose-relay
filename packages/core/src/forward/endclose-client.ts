@@ -82,10 +82,18 @@ export class EndCloseClient {
       headers: opts.etag ? { 'If-None-Match': opts.etag } : {},
       timeoutMs: opts.timeoutMs ?? 10_000,
     })
-    if (res.status === 304) return { status: 'unchanged' }
+    // A 304 is only an answer to the conditional request we made; unsolicited, it is a
+    // misbehaving proxy and must not be mistaken for "unchanged".
+    if (res.status === 304 && opts.etag) return { status: 'unchanged' }
     this.assertOk(res)
     const etag = res.headers.get('etag')
-    return { status: 'document', body: res.text ? JSON.parse(res.text) : null, ...(etag ? { etag } : {}) }
+    let body: unknown
+    try {
+      body = res.text ? JSON.parse(res.text) : null
+    } catch (err) {
+      throw new PermanentHttpError(`HTTP ${res.status} with a non-JSON body`, res.status, res.text.slice(0, 500))
+    }
+    return { status: 'document', body, ...(etag ? { etag } : {}) }
   }
 
   /** Register or refresh this instance's manifest. Failures must never affect ingest or dispatch. */

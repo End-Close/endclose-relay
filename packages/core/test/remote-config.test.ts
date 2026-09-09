@@ -22,7 +22,7 @@ import { FIXTURES, TEST_CONFIG_YAML } from './helpers.js'
 const settlement = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
 const DOC = parse(TEST_CONFIG_YAML) as { routes: unknown[] }
 
-type Reply = { status: number; body?: unknown; etag?: string }
+type Reply = { status: number; body?: unknown; raw?: string; etag?: string }
 
 function fakeEndClose(initial: Reply = { status: 200, body: { environment: 'sandbox', ...DOC }, etag: '"v1"' }) {
   const configGets: Headers[] = []
@@ -40,7 +40,8 @@ function fakeEndClose(initial: Reply = { status: 200, body: { environment: 'sand
       if (reply.status === 200 && reply.etag && headers.get('if-none-match') === reply.etag) {
         return new Response(null, { status: 304 })
       }
-      return new Response(reply.body === undefined ? '' : JSON.stringify(reply.body), {
+      const text = reply.raw ?? (reply.body === undefined ? '' : JSON.stringify(reply.body))
+      return new Response(reply.status === 304 ? null : text, {
         status: reply.status,
         headers: reply.etag ? { etag: reply.etag } : {},
       })
@@ -106,6 +107,10 @@ describe('fetchRemoteConfig', () => {
     [{ status: 200, body: { hello: 'world' } }, 'invalid', false],
     [{ status: 200, body: { routes: [{ id: 'x', source: 'nope' }] } }, 'invalid', false],
     [{ status: 400, body: {} }, 'invalid', false],
+    // Unsolicited 304 (no If-None-Match was sent) and a non-JSON 200 are misbehaving
+    // upstreams, not outages: never "unavailable", which would be retried forever.
+    [{ status: 304 }, 'invalid', false],
+    [{ status: 200, raw: '<html>captive portal</html>' }, 'invalid', false],
   ] as [Reply, string, boolean][])('classifies %j as %s', async (reply, kind, retryable) => {
     const ec = fakeEndClose(reply)
     const err = await fetchRemoteConfig({ apiKey: 'k', fetch: ec.fetchImpl }).catch((e) => e)
@@ -251,12 +256,48 @@ describe('createRelay without routes (owned by End Close)', () => {
     await relay.routes.get('payabli-settlements')
     await sleep(10)
     expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 200 })
-    // Every refresh re-announced the instance as a heartbeat.
-    expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot', 'heartbeat', 'heartbeat', 'heartbeat', 'heartbeat'])
+    // The manifest never changes, so refreshes do not re-announce it before the
+    // heartbeat interval (15 min by default) has passed.
+    expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot'])
+  })
+
+  it('a bounded shutdown announce never holds stop() for long', async () => {
+    const ec = fakeEndClose()
+    const slow: typeof fetch = async (input, init) => {
+      if (String(input).includes('/relays/instances/') && JSON.parse(String(init!.body)).reason === 'shutdown') {
+        await new Promise((_, reject) => init!.signal!.addEventListener('abort', () => reject(new Error('aborted'))))
+      }
+      return ec.fetchImpl(input, init)
+    }
+    const relay = createRelay({
+      store: memoryStore(),
+      secrets: {},
+      endclose: { apiKey: 'k', fetch: slow },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+    })
+    await relay.routes.all()
+    const started = Date.now()
+    await relay.stop()
+    expect(Date.now() - started).toBeLessThan(3_000)
   })
 })
 
 describe('remoteRoutes (explicit provider)', () => {
+  it('heartbeats on the first refresh after the heartbeat interval', async () => {
+    const ec = fakeEndClose()
+    const routes = remoteRoutes({ apiKey: 'k', fetch: ec.fetchImpl }, {
+      refreshIntervalMs: 1,
+      manifest: { instanceId: 'i', host: 'embedded', configSource: 'remote', heartbeatIntervalMs: 30 },
+    })
+    await routes.load()
+    await routes.refresh() // too soon for a heartbeat
+    await sleep(40)
+    await routes.refresh()
+    await sleep(5)
+    expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot', 'heartbeat'])
+  })
+
   it('load() fetches once, refresh() re-fetches, and failures surface as RemoteConfigError', async () => {
     const ec = fakeEndClose()
     const routes = remoteRoutes({ apiKey: 'k', fetch: ec.fetchImpl })

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type { RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
-import { ENDCLOSE_API_URL, EndCloseClient } from '../forward/endclose-client.js'
+import type { EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
 import type { Enrichment } from '../forward/enrich.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
@@ -14,7 +14,7 @@ import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
 import { splitEnrichments, type EnrichmentRegistration } from './manifest.js'
-import { remoteRoutes, type RemoteRouteProvider } from './remote-config.js'
+import { remoteRoutes, toEndCloseClient, type RemoteRouteProvider } from './remote-config.js'
 import { assertKnownEnrichments, assertKnownSources } from './routes.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
 import {
@@ -138,6 +138,7 @@ function toKey(name: string, v: string | Buffer): Buffer {
 
 export { assertKnownSources, assertKnownEnrichments, routeEnrichments, parseRoutes } from './routes.js'
 
+const SHUTDOWN_ANNOUNCE_MS = 1_000
 const FLUSH_POLL_MIN_MS = 50
 const FLUSH_POLL_MAX_MS = 1000
 // Asking for "due" events at this time returns every route holding pending/retry rows.
@@ -145,13 +146,7 @@ const FAR_FUTURE = '9999-12-31T23:59:59.999Z'
 
 export function createRelay(opts: RelayOptions): Relay {
   const logger = opts.logger ?? noopLogger
-  const client =
-    opts.client ??
-    new EndCloseClient(
-      opts.endclose.baseUrl ?? ENDCLOSE_API_URL,
-      opts.endclose.apiKey,
-      opts.endclose.fetch ?? fetch,
-    )
+  const client = toEndCloseClient(opts.client ?? opts.endclose)
   const enrichments = splitEnrichments(opts.enrichments)
   const instanceId = opts.instanceId ?? randomUUID()
   if (Array.isArray(opts.routes)) {
@@ -269,7 +264,9 @@ export function createRelay(opts: RelayOptions): Relay {
     start: () => dispatcher.start(),
     stop: async () => {
       await dispatcher.stop()
-      await remote?.announce('shutdown')
+      // Informational, and End Close records it without refreshing liveness: never let
+      // it hold a host's shutdown for longer than a moment.
+      await remote?.announce('shutdown', { timeoutMs: SHUTDOWN_ANNOUNCE_MS })
     },
     dispatchOnce,
     flush,

@@ -393,7 +393,7 @@ export default function App() {
       </nav>
       {tab === 'status' && status && <RoutesTable status={status} refresh={refresh} />}
       {tab === 'events' && <EventsTab routes={status?.routes.map((r) => r.id) ?? []} />}
-      {tab === 'config' && <ConfigTab managed={status?.remote_config?.managed ? status.remote_config : null} />}
+      {tab === 'config' && <ConfigTab remote={status?.remote_config ?? null} configHash={status?.config_hash ?? null} />}
       {tab === 'audit' && <AuditTab />}
     </>
   )

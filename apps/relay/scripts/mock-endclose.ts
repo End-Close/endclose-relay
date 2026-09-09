@@ -23,6 +23,21 @@ createServer((req, res) => {
   let data = ''
   req.on('data', (c) => (data += c))
   req.on('end', () => {
+    try {
+      handle(req, res, data)
+    } catch (err) {
+      // A mid-edit YAML file or a malformed body must not take the mock down.
+      console.error(`── ${req.method} ${req.url}: ${(err as Error).message}`)
+      if (!res.headersSent) res.statusCode = 500
+      res.end('{"error":"mock failed to handle the request"}')
+    }
+  })
+}).listen(PORT, '127.0.0.1', () => {
+  console.log(`mock End Close API listening on http://127.0.0.1:${PORT}/v1`)
+})
+
+function handle(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, data: string): void {
+  {
     res.setHeader('content-type', 'application/json')
 
     if (req.method === 'POST' && req.url === '/v1/records/bulk') {
@@ -74,7 +89,5 @@ createServer((req, res) => {
 
     res.statusCode = 404
     res.end('{"error":"not found"}')
-  })
-}).listen(PORT, '127.0.0.1', () => {
-  console.log(`mock End Close API listening on http://127.0.0.1:${PORT}/v1`)
-})
+  }
+}

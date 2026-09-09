@@ -12,6 +12,7 @@ export {
   remoteRoutes,
   RemoteConfigError,
   DEFAULT_REMOTE_REFRESH_MS,
+  DEFAULT_MANIFEST_HEARTBEAT_MS,
 } from './engine/remote-config.js'
 export type {
   RemoteConfig,

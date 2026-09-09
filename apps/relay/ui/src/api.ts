@@ -34,6 +34,7 @@ export interface RemoteConfigStatus {
   error: string | null
   retrying: boolean
   last_checked_at: string | null
+  last_confirmed_at: string | null
 }
 
 export interface EventSummary {

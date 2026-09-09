@@ -112,7 +112,7 @@ async function fetchDocument(client: EndCloseClient, opts: FetchRemoteConfigOpti
           cause: err,
         })
       }
-      throw new RemoteConfigError('invalid', `unexpected response from End Close: HTTP ${err.status}`, {
+      throw new RemoteConfigError('invalid', `unexpected response from End Close: ${err.message}`, {
         cause: err,
       })
     }
@@ -161,11 +161,12 @@ export interface RemoteRoutesOptions extends Omit<FetchRemoteConfigOptions, 'ifN
   refreshIntervalMs?: number
   logger?: Logger | null
   /**
-   * Announce this instance to End Close (`PUT /relays/instances/{id}`) on the first
-   * fetch and each refresh, so its adapters and enrichments are known when the
-   * configuration is authored. Omit to send nothing.
+   * Announce this instance to End Close (`PUT /relays/instances/{id}`): `boot` with the
+   * first fetch, `heartbeat` on the first refresh after `heartbeatIntervalMs` (default
+   * 15 min), `shutdown` on request. That is how End Close knows this instance's adapters
+   * and enrichments when the configuration is authored. Omit to send nothing.
    */
-  manifest?: ManifestSource & { instanceId: string }
+  manifest?: ManifestSource & { instanceId: string; heartbeatIntervalMs?: number }
 }
 
 export interface RemoteRouteProvider extends RouteProvider {
@@ -176,10 +177,11 @@ export interface RemoteRouteProvider extends RouteProvider {
   /** The document currently served, if any. */
   current(): RemoteConfig | undefined
   /** Send the instance manifest now (no-op without `manifest`). Never throws. */
-  announce(reason: ManifestReason): Promise<void>
+  announce(reason: ManifestReason, opts?: { timeoutMs?: number }): Promise<void>
 }
 
 export const DEFAULT_REMOTE_REFRESH_MS = 60_000
+export const DEFAULT_MANIFEST_HEARTBEAT_MS = 15 * 60_000
 // After a failed initial load, further lookups answer "unavailable" from the cached
 // error for this long instead of re-fetching per webhook.
 const FAILED_LOAD_HOLD_MS = 5_000
@@ -207,12 +209,14 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
   let inFlight: Promise<RemoteConfig> | undefined
   let lastError: RemoteConfigError | undefined
   let holdUntil = 0
-  let announced = false
+  let lastAnnouncedAt: number | undefined
+  const heartbeatMs = opts.manifest?.heartbeatIntervalMs ?? DEFAULT_MANIFEST_HEARTBEAT_MS
 
-  const announce = async (reason: ManifestReason): Promise<void> => {
+  const announce = async (reason: ManifestReason, o: { timeoutMs?: number } = {}): Promise<void> => {
     if (!opts.manifest) return
+    lastAnnouncedAt = Date.now()
     try {
-      await client.putRelayInstance(opts.manifest.instanceId, buildManifest(opts.manifest, reason))
+      await client.putRelayInstance(opts.manifest.instanceId, buildManifest(opts.manifest, reason), o)
     } catch (err) {
       logger.warn('End Close instance manifest not accepted', { reason, error: (err as Error).message })
     }
@@ -222,9 +226,10 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
     if (inFlight) return inFlight
     holdUntil = Date.now() + (cached ? refreshMs : FAILED_LOAD_HOLD_MS)
     // The manifest goes first so End Close learns this instance's capabilities even
-    // when it has nothing to serve yet (register, then author).
-    void announce(announced ? 'heartbeat' : 'boot')
-    announced = true
+    // when it has nothing to serve yet (register, then author). Its content never
+    // changes, so later refreshes only re-announce at the heartbeat cadence.
+    if (lastAnnouncedAt === undefined) void announce('boot')
+    else if (Date.now() - lastAnnouncedAt >= heartbeatMs) void announce('heartbeat')
     const held = cached
     inFlight = fetchDocument(client, {
       ...fetchOpts,
@@ -276,31 +281,29 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
     return inFlight
   }
 
-  const unavailable = (e: RemoteConfigError) =>
-    new StoreUnavailableError(`End Close configuration unavailable: ${e.message}`, 'routes.get', {
-      cause: e,
-    })
+  const unavailable = (e: RemoteConfigError, op: string) =>
+    new StoreUnavailableError(`End Close configuration unavailable: ${e.message}`, op, { cause: e })
 
-  const ready = async (): Promise<void> => {
+  const ready = async (op: string): Promise<void> => {
     if (cached) {
       if (Date.now() >= holdUntil && !inFlight) void fetchNow().catch(() => {}) // logged in fetchNow
       return
     }
-    if (!inFlight && lastError && Date.now() < holdUntil) throw unavailable(lastError)
+    if (!inFlight && lastError && Date.now() < holdUntil) throw unavailable(lastError, op)
     try {
       await fetchNow()
     } catch (err) {
-      throw unavailable(err as RemoteConfigError)
+      throw unavailable(err as RemoteConfigError, op)
     }
   }
 
   return {
     get: async (id) => {
-      await ready()
+      await ready('routes.get')
       return byId.get(id)
     },
     all: async () => {
-      await ready()
+      await ready('routes.all')
       return [...byId.values()]
     },
     load: () => (cached ? Promise.resolve(cached) : fetchNow()),
