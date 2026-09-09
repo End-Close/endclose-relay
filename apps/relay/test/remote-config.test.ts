@@ -21,6 +21,14 @@ import { DATA_KEY, MASKING_KEY, TEST_CONFIG_YAML } from './helpers.js'
 const DOC = parse(TEST_CONFIG_YAML) as { routes: unknown[] }
 const AUTH = { authorization: 'Basic ' + Buffer.from('a:b').toString('base64') }
 
+async function waitFor(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
 class MockEndClose {
   server: Server
   requests: { method: string; url: string; headers: Record<string, string | string[] | undefined> }[] = []
@@ -214,20 +222,17 @@ describe('checkEndClose', () => {
       const seen: string[] = []
       m.start(15, (r) => seen.push(r.kind))
       mock.reply = { status: 200, body: { environment: 'sandbox', routes: [DOC.routes[0]] } }
-      await new Promise((r) => setTimeout(r, 40))
-      expect(listConfigVersions(db)).toHaveLength(2)
+      await waitFor(() => listConfigVersions(db).length === 2)
 
       mock.reply = { status: 404, body: {} }
-      await new Promise((r) => setTimeout(r, 40))
-      expect(m.managed).toBe(false)
+      await waitFor(() => !m.managed)
       expect(m.snapshot().state).toBe('unmanaged')
       const gets = mock.configGets().length
-      await new Promise((r) => setTimeout(r, 40))
-      expect(mock.configGets().length).toBeGreaterThan(gets) // 404 is a state: keep asking
+      await waitFor(() => mock.configGets().length > gets) // 404 is a state: keep asking
+
       // Management switched back on is noticed without a restart.
       mock.reply = { status: 200, body: { environment: 'sandbox', ...DOC } }
-      await new Promise((r) => setTimeout(r, 40))
-      expect(m.managed).toBe(true)
+      await waitFor(() => m.managed)
       expect(listConfigVersions(db)).toHaveLength(3)
       m.stop()
       expect(seen).toContain('managed')
