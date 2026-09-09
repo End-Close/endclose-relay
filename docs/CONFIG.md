@@ -1,8 +1,9 @@
 # Configuration Reference
 
 The complete configuration surface — a declarative YAML document, edited and versioned
-in the admin UI's config tab (a `relay.yaml` file seeds the application once, on first
-boot; without one, the configuration End Close holds for the API key does).
+in the admin UI's config tab — or, when End Close manages your environment, authored in
+End Close and read-only here (a `relay.yaml` file seeds a locally configured application
+once, on first boot).
 Authoritative source: `packages/core/src/config/schema.ts` (zod); anything the schema
 rejects fails validation in the UI and at boot. Shipped configs (`relay.example.yaml`,
 `apps/relay/dev/relay.dev.yaml`) are validated in CI, which is how we keep the compatibility
@@ -31,7 +32,8 @@ can never sit in the document silently doing nothing.
 | `RELAY_DATA_KEY` / `MASKING_HMAC_KEY` | — | **required**; 32+ chars each (`openssl rand -hex 32`) |
 | `RELAY_DB_PATH` | `/var/lib/endclose-relay/relay.db` | SQLite location (must be known before config can load) |
 | `RELAY_CONFIG` | `/etc/endclose-relay/relay.yaml` | first-boot seed file path |
-| `RELAY_REMOTE_CONFIG` | on | with no stored config and no seed file, fetch the initial configuration from End Close (`GET /relays/config`, authenticated by `ENDCLOSE_API_KEY`). `off` / `0` / `false` disables; no effect once a configuration is stored. See [Lifecycle](#lifecycle) |
+| `RELAY_REMOTE_CONFIG` | on | ask End Close whether it manages this environment's configuration (`GET /relays/config`, authenticated by `ENDCLOSE_API_KEY`) and, if so, run and follow its document. `off` / `0` / `false` never asks: always configured locally. See [Lifecycle](#lifecycle) |
+| `RELAY_REMOTE_POLL_MS` | `60000` | how often a managed relay asks End Close for changes (a conditional GET; unchanged costs a 304) |
 | `RELAY_SECRETS_FILE` | — | optional: load secrets from a mounted dotenv file |
 | `RELAY_ADMIN_URL` | `http://127.0.0.1:$RELAY_ADMIN_PORT` | override for [`relayctl`](./RELAYCTL.md) (in-container CLI) |
 | `RELAY_INGEST_PORT` / `RELAY_INGEST_HOST` | `8443` / `0.0.0.0` | webhook listener |
@@ -46,7 +48,7 @@ can never sit in the document silently doing nothing.
 | `RELAY_INSTANCE_ID` | `relay` | lease owner recorded on claimed batches. A replacement task with the same id reclaims its predecessor's in-flight batch at boot instead of waiting out `RELAY_LEASE_MS`; the relay is deployed single-writer, so the fixed default is right. Give each replica a distinct id if more than one ever shares a store |
 | `RELAY_RETENTION_DELIVERED_DAYS` | `7` | payloads of delivered/filtered events wiped after |
 | `RELAY_RETENTION_LEDGER_DAYS` | `30` | their rows (idempotency ledger) deleted after |
-| `RELAY_TELEMETRY` | on | operational call-home to `api.endclose.com` (`off` / `0` / `false` disables). See [SECURITY.md](./SECURITY.md). |
+| `RELAY_TELEMETRY` | on | instance manifest call-home (`PUT /relays/instances/<RELAY_INSTANCE_ID>` at boot, every 15 min, at shutdown, after a local config apply and, at most once a minute, when the engine reports an error: host kind, versions, adapter names and a one-word reason — nothing else). `off` / `0` / `false` disables. See [SECURITY.md](./SECURITY.md). |
 | `LOG_LEVEL` | `info` | pino level (`debug` adds ingest shape metadata: payload keys, body size, header names — never values) |
 
 ## Routes
@@ -134,20 +136,26 @@ shows the outbound record plus every field that is *not* forwarded.
 
 ## Lifecycle
 
-The database is authoritative. On first boot an empty application is seeded, in this
-order: from `relay.yaml` if the file exists; otherwise from **End Close**, which holds a
-routes document per relay API key (`GET /relays/config` — the key is environment-scoped,
-so it alone determines which environment's configuration comes back); otherwise the
-relay boots into bootstrap mode for manual configuration. A fetched document is stored
-as config version 1 with `applied_by: endclose`, audited like any apply, and prefixed
-with a comment saying where and when it was fetched. Either seed is read exactly once
-and ignored afterwards — End Close never overwrites a stored configuration, and later
-changes are admin applies like any other. If End Close is unreachable at first boot the
-relay waits in bootstrap mode, retries every minute, and restarts itself into running
-mode when the fetch succeeds (the setup screen shows the failure; applying a
-configuration manually there wins). A document that names an unset secret env var is
-not applied: set the variable and recreate the container. `RELAY_REMOTE_CONFIG=off`
-disables the fetch entirely. Edits happen in the config tab: **validate** (schema + secret
+The database is authoritative; who writes to it depends on whether End Close manages the
+environment. At boot, and then every `RELAY_REMOTE_POLL_MS` while it does, the relay asks
+`GET /relays/config` (the API key is environment-scoped, so it alone selects the
+environment; End Close keeps one document per environment):
+
+- **200** — End Close manages it. The document is stored as a version with `applied_by:
+  endclose`, audited like any apply, and applied live (routes are read from the database
+  per request); the ETag is kept so an unchanged poll is a 304. The config tab is
+  read-only and `POST /config` answers 409; validate, preview, download and history still
+  work. Edits are made in End Close and arrive within a minute. A document naming an
+  unset secret env var is not applied: set the variable and recreate the container.
+- **404** — End Close is not managing it. The relay is configured locally: the stored
+  config if there is one (including the last document End Close served), else
+  `relay.yaml` seeds an empty application once, else bootstrap mode. It keeps asking at
+  the same cadence, so management switched on later is picked up without a restart.
+- **unreachable** — the relay runs whatever it has (a stored config keeps its last owner)
+  and keeps asking; with nothing stored it waits in bootstrap mode, retrying every
+  `RELAY_REMOTE_POLL_MS`, and restarts itself into running mode when End Close answers.
+
+`RELAY_REMOTE_CONFIG=off` never asks: the relay is always configured locally. Edits happen in the config tab: **validate** (schema + secret
 env status), **preview**, **apply** — each apply appends an immutable version (full
 YAML, SHA-256 hash, timestamp) and an audit entry, and **takes effect immediately**
 (the document is routes-only; nothing in it needs a restart). If a stored config ever

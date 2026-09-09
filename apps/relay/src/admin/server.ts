@@ -29,7 +29,6 @@ import {
 import { isDbPathPersistent } from '../db/persistence.js'
 import { VERSION } from '../version.js'
 import { log } from '../log.js'
-import type { Telemetry } from '../forward/telemetry.js'
 import type { RemoteConfigStatus } from '../config/remote.js'
 
 // The admin plane is the single management surface (UI + API). Basic auth is mandatory;
@@ -53,12 +52,10 @@ export interface AdminDeps {
   configError?: string
   /** Called once after the first successful config apply in bootstrap mode. */
   onBootstrapApplied?: () => void
-  /**
-   * Bootstrap mode: why no configuration was fetched from End Close (read live, because
-   * a transient failure keeps being retried in the background).
-   */
+  /** Whether End Close owns the configuration (read live: it can change while running). */
   remoteConfig?: () => RemoteConfigStatus | undefined
-  telemetry?: Telemetry
+  /** Called after every successful local apply (the instance manifest is re-sent). */
+  onConfigApplied?: () => void
   /** Requests per client per minute before 429 (default 300). */
   rateLimitMax?: number
   /** Where `auth.secret_env` references resolve. Defaults to the process environment. */
@@ -183,7 +180,6 @@ export async function buildAdminServer(deps: AdminDeps): Promise<FastifyInstance
     kv.setGlobalKillswitch(state as GlobalKillswitch)
     audit.log(ACTOR, 'killswitch.' + state, { before })
     log.warn('killswitch changed', { before, after: state })
-    deps.telemetry?.capture('relay_killswitch', { before, after: state })
     return { global: state }
   })
 
@@ -307,15 +303,18 @@ export async function buildAdminServer(deps: AdminDeps): Promise<FastifyInstance
   app.post('/config', async (request, reply) => {
     const { yaml } = (request.body ?? {}) as { yaml?: string }
     if (!yaml) return reply.code(400).send({ error: 'yaml required' })
+    // End Close owns the document: the only way to change it is in End Close, and the
+    // change arrives on the next poll. Validate and preview still work on drafts.
+    if (deps.remoteConfig?.()?.managed) {
+      return reply.code(409).send({ error: 'configuration is managed by End Close; edit it there' })
+    }
     let loaded
     try {
       loaded = saveConfig(deps.db, yaml, ACTOR, secrets)
     } catch (err) {
       return reply.code(422).send({ error: (err as Error).message })
     }
-    deps.telemetry?.capture('relay_config_applied', {
-      config: yaml,
-    })
+    deps.onConfigApplied?.()
     if (mode === 'bootstrap') {
       // Recovery (stored config was invalid): come back up PAUSED. The repair was
       // hand-edited under pressure and a backlog may be waiting — hold egress until an

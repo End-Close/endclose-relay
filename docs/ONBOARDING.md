@@ -11,8 +11,9 @@ whole sandbox phase to take about an hour of hands-on time.
   webhooks (typically behind your own TLS terminator / load balancer on 443 → relay
   :8443).
 - Egress allowed to `api.endclose.com:443` and your image registry. Nothing else is
-  needed (see `docs/SECURITY.md`). The relay POSTs operational events (boot, heartbeat,
-  errors) to that same API; set `RELAY_TELEMETRY=off` if you do not want that.
+  needed (see `docs/SECURITY.md`). The relay asks that same API whether End Close manages
+  its configuration and reports its instance manifest (boot, heartbeat, shutdown); set
+  `RELAY_REMOTE_CONFIG=off` / `RELAY_TELEMETRY=off` if you do not want either.
 - Five secrets provided to the relay container as **environment variables**, through
   whatever mechanism you normally use for secrets (your secret manager's env injection,
   Compose `env_file`, systemd credentials, …): `ENDCLOSE_API_KEY` (issued by End Close),
@@ -45,12 +46,12 @@ cd /opt/endclose-relay
 docker compose up -d
 ```
 
-With a seed file the relay comes up configured. Without one it asks End Close for the
-configuration prepared for your API key (the key is environment-scoped, so sandbox and
-production keys each fetch their own) and comes up configured with that — review it in
-the config tab before pointing Payabli at the relay. If End Close holds none, or you set
-`RELAY_REMOTE_CONFIG=off`, the relay boots into **bootstrap mode** (no webhooks accepted
-yet). Open the admin UI — `ssh -L 8081:127.0.0.1:8081 <host>` then
+If End Close manages your environment's configuration (the API key is environment-scoped,
+so sandbox and production keys each follow their own), the relay comes up running End
+Close's document and keeps it current — review it in the config tab before pointing
+Payabli at the relay; edits are made in End Close. Otherwise, with a seed file the relay
+comes up configured from it; without one it boots into **bootstrap mode** (no webhooks
+accepted yet). `RELAY_REMOTE_CONFIG=off` keeps configuration local regardless. Open the admin UI — `ssh -L 8081:127.0.0.1:8081 <host>` then
 `http://127.0.0.1:8081` (basic auth from `ADMIN_BASIC_AUTH`) — paste your initial
 configuration, validate, preview, apply. The relay restarts itself into running mode.
 Start any seed from `relay.example.yaml`; the reference for every field is

@@ -13,7 +13,8 @@ import { sleep } from '../util/strings.js'
 import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
-import { remoteRoutes } from './remote-config.js'
+import { splitEnrichments, type EnrichmentRegistration } from './manifest.js'
+import { remoteRoutes, type RemoteRouteProvider } from './remote-config.js'
 import { assertKnownEnrichments, assertKnownSources } from './routes.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
 import {
@@ -67,14 +68,23 @@ export interface RelayOptions {
    * Throw to retry the event with backoff; throw `EnrichmentError` to park it; return
    * `undefined` to omit the field. Bounded by `dispatch.enrichTimeoutMs` per call.
    */
-  enrichments?: Record<string, Enrichment>
+  enrichments?: Record<string, EnrichmentRegistration>
   /** Lease owner for claimed batches. Give each long-lived replica a stable id. */
   instanceId?: string
   hooks?: RelayHooks
   /** Supply a pre-built client (the application shares one with telemetry). */
   client?: EndCloseClient
   /** Tuning for routes fetched from End Close (only used when `routes` is omitted). */
-  remoteConfig?: { refreshIntervalMs?: number }
+  remoteConfig?: {
+    refreshIntervalMs?: number
+    /**
+     * Announce this instance to End Close (`PUT /relays/instances/{instanceId}`: host
+     * kind, engine and schema versions, registered adapters and enrichments) on the
+     * first fetch, each refresh, and `stop()`. Default true when routes come from End
+     * Close; nothing is sent otherwise.
+     */
+    announce?: boolean
+  }
 }
 
 export type DispatchOnceResult = DispatchCounts
@@ -142,23 +152,35 @@ export function createRelay(opts: RelayOptions): Relay {
       opts.endclose.apiKey,
       opts.endclose.fetch ?? fetch,
     )
+  const enrichments = splitEnrichments(opts.enrichments)
+  const instanceId = opts.instanceId ?? randomUUID()
   if (Array.isArray(opts.routes)) {
     assertKnownSources(opts.routes, opts.adapters)
-    assertKnownEnrichments(opts.routes, opts.enrichments)
+    assertKnownEnrichments(opts.routes, enrichments.functions)
   }
-  const routes: RouteProvider =
+  const remote: RemoteRouteProvider | undefined =
     opts.routes === undefined
       ? remoteRoutes(client, {
           logger,
           ...(opts.adapters ? { adapters: opts.adapters } : {}),
-          ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
+          enrichments: enrichments.functions,
           ...(opts.remoteConfig?.refreshIntervalMs !== undefined
             ? { refreshIntervalMs: opts.remoteConfig.refreshIntervalMs }
             : {}),
+          ...(opts.remoteConfig?.announce === false
+            ? {}
+            : {
+                manifest: {
+                  instanceId,
+                  host: 'embedded',
+                  configSource: 'remote',
+                  adapters: opts.adapters,
+                  enrichments: enrichments.descriptors,
+                },
+              }),
         })
-      : Array.isArray(opts.routes)
-        ? staticRoutes(opts.routes)
-        : opts.routes
+      : undefined
+  const routes: RouteProvider = remote ?? (Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes!)
   const control = opts.control ?? new MemoryControlStore()
   const secrets = toSecretResolver(opts.secrets)
   const hooks = opts.hooks ?? new RelayHooks()
@@ -191,11 +213,11 @@ export function createRelay(opts: RelayOptions): Relay {
     client,
     codec,
     maskingKey,
-    instanceId: opts.instanceId ?? randomUUID(),
+    instanceId,
     signal,
     hooks,
     logger,
-    ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
+    enrichments: enrichments.functions,
   })
 
   const dispatchOnce = async (o: { prune?: boolean } = {}): Promise<DispatchOnceResult> => {
@@ -245,7 +267,10 @@ export function createRelay(opts: RelayOptions): Relay {
   return {
     ingest: (routeId, req) => ingestWebhook(ingestDeps, routeId, req),
     start: () => dispatcher.start(),
-    stop: () => dispatcher.stop(),
+    stop: async () => {
+      await dispatcher.stop()
+      await remote?.announce('shutdown')
+    },
     dispatchOnce,
     flush,
     prune: () => dispatcher.pruneNow(),

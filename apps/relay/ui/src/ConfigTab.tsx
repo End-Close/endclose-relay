@@ -9,6 +9,7 @@ import {
   validateConfig,
   type ConfigVersion,
   type PreviewResult,
+  type RemoteConfigStatus,
   type ValidationResult,
 } from './api.js'
 import { fmtAgo } from './format.js'
@@ -41,7 +42,11 @@ routes:
 // schema, previews the exact outbound record for a sample payload, and saves a new
 // config version. Secrets never appear here — the YAML references env-var names only.
 
-export default function ConfigTab() {
+// `managed`: End Close owns the configuration. The document is shown, validated and
+// previewed as usual, but not edited here — changes are made in End Close and arrive
+// within a minute as new versions.
+export default function ConfigTab({ managed = null }: { managed?: RemoteConfigStatus | null }) {
+  const locked = managed !== null
   const [yaml, setYaml] = useState('')
   const [activeHash, setActiveHash] = useState('')
   const [dirty, setDirty] = useState(false)
@@ -170,17 +175,30 @@ export default function ConfigTab() {
 
   return (
     <div>
+      {locked && (
+        <p className="env-warning">
+          <strong>Managed by End Close</strong>
+          {managed.environment ? ` (environment: ${managed.environment})` : ''} — this configuration is
+          edited in End Close and reaches the relay within a minute. The editor below is read-only;
+          validate, preview and download still work.
+          {managed.last_checked_at && (
+            <span className="text-dim"> Last confirmed {fmtAgo(managed.last_checked_at)}.</span>
+          )}
+        </p>
+      )}
       <p className="text-dim">
         active config:{' '}
         <code className="text-xs">{activeHash ? `${activeHash.slice(0, 19)}…` : '(none yet)'}</code>
-        {dirty && <span className="text-warn"> (editor has unsaved changes)</span>}
+        {dirty && !locked && <span className="text-warn"> (editor has unsaved changes)</span>}
       </p>
 
       <textarea
         className="panel min-h-96 resize-y"
         spellCheck={false}
+        readOnly={locked}
         value={yaml}
         onChange={(e) => {
+          if (locked) return
           setYaml(e.target.value)
           setDirty(true)
           setValidation(null)
@@ -189,7 +207,7 @@ export default function ConfigTab() {
 
       <div className="my-4 flex items-center gap-3">
         <button onClick={onValidate}>validate</button>
-        <button onClick={onSave} disabled={!dirty}>apply</button>
+        {!locked && <button onClick={onSave} disabled={!dirty}>apply</button>}
         <button onClick={download}>download yaml</button>
         {saveMsg && (
           <span className={saveMsg.error ? 'font-bold text-bad' : 'text-dim'}>{saveMsg.text}</span>
@@ -261,7 +279,7 @@ export default function ConfigTab() {
               <td>
                 {v.config_hash === activeHash ? (
                   <span className="pill text-ok">active</span>
-                ) : (
+                ) : locked ? null : (
                   <button onClick={() => restoreVersion(v.id)}>load</button>
                 )}
               </td>

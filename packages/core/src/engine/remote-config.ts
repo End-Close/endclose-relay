@@ -6,22 +6,24 @@ import {
 } from '../forward/endclose-client.js'
 import type { ProcessorAdapter } from '../ingest/adapters/types.js'
 import { noopLogger, type Logger } from '../logger.js'
+import { buildManifest, type ManifestReason, type ManifestSource } from './manifest.js'
 import { parseRoutes } from './routes.js'
 import { StoreUnavailableError, type RouteProvider } from './store.js'
 
 // Routes held by End Close instead of supplied by the host. An End Close API key is
 // issued per relay and scoped to one environment, so the key alone determines which
-// environment's document comes back: a host that provides no routes fetches its
-// configuration with the key it already has, and keeps it current by re-fetching in the
-// background. Only route definitions travel this way; secrets stay references to names
-// the host's SecretResolver resolves, exactly as in a local document.
+// environment's document comes back; End Close keeps one configuration per environment.
+// The status code of GET /relays/config is the whole answer to who owns the
+// configuration: 200 = End Close does (run the document, keep its ETag), 304 = owned and
+// unchanged since the ETag sent, 404 = not managed. Only route definitions travel this
+// way; secrets stay references to names the host's SecretResolver resolves.
 
 export type RemoteConfigErrorKind =
   /** End Close could not be reached or answered with a transient status; retry later. */
   | 'unavailable'
-  /** The API key was rejected. */
+  /** The API key was rejected (401: missing/wrong/revoked; 403: not a relay key). */
   | 'unauthorized'
-  /** End Close holds no configuration for this key (nothing provisioned yet). */
+  /** End Close is not managing this environment (no document, or the switch off). */
   | 'not_found'
   /** The response is not a valid routes document (or an unexpected status). */
   | 'invalid'
@@ -48,6 +50,8 @@ export interface RemoteConfig {
   document: { routes: unknown }
   /** The End Close environment the API key belongs to, when the response names it. */
   environment?: string
+  /** Send back as `ifNoneMatch` to learn cheaply whether the document changed. */
+  etag?: string
   fetchedAt: string
 }
 
@@ -68,24 +72,38 @@ export interface FetchRemoteConfigOptions {
   enrichments?: Record<string, unknown>
   /** Request timeout (default 10 s). */
   timeoutMs?: number
+  /** The ETag of the document already held; resolves to `null` when it is unchanged. */
+  ifNoneMatch?: string
 }
 
 /**
  * Fetch and validate the routes document End Close holds for this API key's
- * environment (`GET /relays/config`). Throws `RemoteConfigError`.
+ * environment (`GET /relays/config`). With `ifNoneMatch`, resolves to `null` when End
+ * Close answers 304 (owned and unchanged). Throws `RemoteConfigError` otherwise.
  */
-export async function fetchRemoteConfig(
+export function fetchRemoteConfig(
   src: EndCloseSource,
-  opts: FetchRemoteConfigOptions = {},
-): Promise<RemoteConfig> {
-  const client = toEndCloseClient(src)
-  let body: unknown
+  opts: FetchRemoteConfigOptions & { ifNoneMatch: string },
+): Promise<RemoteConfig | null>
+export function fetchRemoteConfig(
+  src: EndCloseSource,
+  opts?: FetchRemoteConfigOptions & { ifNoneMatch?: undefined },
+): Promise<RemoteConfig>
+export function fetchRemoteConfig(src: EndCloseSource, opts: FetchRemoteConfigOptions = {}): Promise<RemoteConfig | null> {
+  return fetchDocument(toEndCloseClient(src), opts)
+}
+
+async function fetchDocument(client: EndCloseClient, opts: FetchRemoteConfigOptions): Promise<RemoteConfig | null> {
+  let res: Awaited<ReturnType<EndCloseClient['getRelayConfig']>>
   try {
-    body = await client.getRelayConfig(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs })
+    res = await client.getRelayConfig({
+      ...(opts.ifNoneMatch !== undefined ? { etag: opts.ifNoneMatch } : {}),
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    })
   } catch (err) {
     if (err instanceof PermanentHttpError) {
       if (err.status === 404) {
-        throw new RemoteConfigError('not_found', 'End Close holds no relay configuration for this API key', {
+        throw new RemoteConfigError('not_found', 'End Close is not managing this environment\'s configuration', {
           cause: err,
         })
       }
@@ -102,8 +120,9 @@ export async function fetchRemoteConfig(
       cause: err,
     })
   }
+  if (res.status === 'unchanged') return null
 
-  const doc = body as { routes?: unknown; environment?: unknown } | null
+  const doc = res.body as { routes?: unknown; environment?: unknown } | null
   if (!doc || typeof doc !== 'object' || !('routes' in doc)) {
     throw new RemoteConfigError('invalid', 'End Close configuration response carries no routes document')
   }
@@ -128,17 +147,25 @@ export async function fetchRemoteConfig(
     routes,
     document: { routes: doc.routes },
     ...(environment !== undefined ? { environment } : {}),
+    ...(res.etag !== undefined ? { etag: res.etag } : {}),
     fetchedAt: new Date().toISOString(),
   }
 }
 
-export interface RemoteRoutesOptions extends FetchRemoteConfigOptions {
+export interface RemoteRoutesOptions extends Omit<FetchRemoteConfigOptions, 'ifNoneMatch'> {
   /**
    * How long a fetched document is served before the next access triggers a background
-   * re-fetch (default 60 s). A failed refresh keeps the last document.
+   * re-fetch (default 60 s). The re-fetch sends the ETag, so an unchanged document
+   * costs a 304. A failed refresh keeps the last document.
    */
   refreshIntervalMs?: number
   logger?: Logger | null
+  /**
+   * Announce this instance to End Close (`PUT /relays/instances/{id}`) on the first
+   * fetch and each refresh, so its adapters and enrichments are known when the
+   * configuration is authored. Omit to send nothing.
+   */
+  manifest?: ManifestSource & { instanceId: string }
 }
 
 export interface RemoteRouteProvider extends RouteProvider {
@@ -148,6 +175,8 @@ export interface RemoteRouteProvider extends RouteProvider {
   refresh(): Promise<RemoteConfig>
   /** The document currently served, if any. */
   current(): RemoteConfig | undefined
+  /** Send the instance manifest now (no-op without `manifest`). Never throws. */
+  announce(reason: ManifestReason): Promise<void>
 }
 
 export const DEFAULT_REMOTE_REFRESH_MS = 60_000
@@ -159,7 +188,9 @@ const FAILED_LOAD_HOLD_MS = 5_000
  * A `RouteProvider` backed by End Close. The first lookup fetches (and fails with
  * `StoreUnavailableError`, so ingest answers 503 and the processor retries, until a
  * document has been loaded); later lookups serve the cached document and re-fetch in
- * the background once it is older than `refreshIntervalMs`.
+ * the background once it is older than `refreshIntervalMs`. Once a document is held,
+ * nothing End Close answers later takes it away: a 404 (management switched off) or an
+ * error keeps the last document running and is logged.
  */
 export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}): RemoteRouteProvider {
   const client = toEndCloseClient(src)
@@ -176,18 +207,41 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
   let inFlight: Promise<RemoteConfig> | undefined
   let lastError: RemoteConfigError | undefined
   let holdUntil = 0
+  let announced = false
+
+  const announce = async (reason: ManifestReason): Promise<void> => {
+    if (!opts.manifest) return
+    try {
+      await client.putRelayInstance(opts.manifest.instanceId, buildManifest(opts.manifest, reason))
+    } catch (err) {
+      logger.warn('End Close instance manifest not accepted', { reason, error: (err as Error).message })
+    }
+  }
 
   const fetchNow = (): Promise<RemoteConfig> => {
     if (inFlight) return inFlight
     holdUntil = Date.now() + (cached ? refreshMs : FAILED_LOAD_HOLD_MS)
-    inFlight = fetchRemoteConfig(client, fetchOpts)
+    // The manifest goes first so End Close learns this instance's capabilities even
+    // when it has nothing to serve yet (register, then author).
+    void announce(announced ? 'heartbeat' : 'boot')
+    announced = true
+    const held = cached
+    inFlight = fetchDocument(client, {
+      ...fetchOpts,
+      ...(held?.etag !== undefined ? { ifNoneMatch: held.etag } : {}),
+    })
       .then((config) => {
-        const first = cached === undefined
-        const changed = first || JSON.stringify(cached!.document) !== JSON.stringify(config.document)
-        cached = config
-        byId = new Map(config.routes.map((r) => [r.id, r]))
         lastError = undefined
         holdUntil = Date.now() + refreshMs
+        if (config === null) {
+          // 304: owned and unchanged. Only the fetch time moves.
+          cached = { ...held!, fetchedAt: new Date().toISOString() }
+          return cached
+        }
+        const first = held === undefined
+        const changed = first || JSON.stringify(held!.document) !== JSON.stringify(config.document)
+        cached = config
+        byId = new Map(config.routes.map((r) => [r.id, r]))
         if (changed) {
           logger.info(first ? 'End Close configuration loaded' : 'End Close configuration updated', {
             routes: config.routes.map((r) => r.id).join(','),
@@ -200,12 +254,19 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
         const e = err instanceof RemoteConfigError ? err : new RemoteConfigError('unavailable', String(err), { cause: err })
         lastError = e
         if (cached) {
-          logger.warn('End Close configuration refresh failed; serving the last document', {
-            kind: e.kind,
-            error: e.message,
-          })
+          logger.warn(
+            e.kind === 'not_found'
+              ? 'End Close is no longer managing this configuration; serving the last document'
+              : 'End Close configuration refresh failed; serving the last document',
+            { kind: e.kind, error: e.message },
+          )
         } else {
-          logger.error('End Close configuration unavailable', { kind: e.kind, error: e.message })
+          logger.error(
+            e.kind === 'not_found'
+              ? 'End Close is not managing this environment and no local routes were given: nothing can be ingested (503) until management is switched on'
+              : 'End Close configuration unavailable',
+            { kind: e.kind, error: e.message },
+          )
         }
         throw e
       })
@@ -245,5 +306,6 @@ export function remoteRoutes(src: EndCloseSource, opts: RemoteRoutesOptions = {}
     load: () => (cached ? Promise.resolve(cached) : fetchNow()),
     refresh: fetchNow,
     current: () => cached,
+    announce,
   }
 }

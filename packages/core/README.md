@@ -75,14 +75,22 @@ process.on('SIGTERM', () => relay.stop().then(() => process.exit(0)))
 ## Configuration from End Close
 
 Leave `routes` out and the engine fetches them from End Close (`GET /relays/config`) with
-the API key. Keys are issued per relay and scoped to one environment, so the key alone
-determines which environment's routes come back — nothing else selects it.
+the API key. Keys are issued per relay and scoped to one environment, and End Close keeps
+one document per environment, so the key alone determines which routes come back. The
+status code is the whole answer to who owns the configuration: **200** End Close does
+(document + ETag), **304** owned and unchanged since the ETag sent, **404** not managed.
 
 ```ts
 const relay = createRelay({
   store, secrets, encryption, maskingKey,
   endclose: { apiKey: process.env.ENDCLOSE_API_KEY! },
-  remoteConfig: { refreshIntervalMs: 60_000 },   // default
+  instanceId: 'api-1',
+  enrichments: {
+    // A descriptor alongside the function is what End Close shows when authoring a map
+    // that names it. A bare function still works.
+    resident_name: { fn: lookupResident, description: 'Resident full name from the payor id', output: 'string' },
+  },
+  remoteConfig: { refreshIntervalMs: 60_000, announce: true },   // defaults
 })
 ```
 
@@ -90,29 +98,42 @@ const relay = createRelay({
   (`outcome: 'unavailable'`) so the processor retries, and a failed fetch is held for a
   few seconds rather than repeated per webhook.
 - Afterwards lookups serve the cached document; once it is older than
-  `refreshIntervalMs` the next lookup re-fetches in the background, so changes made in
-  End Close reach a running relay within roughly one interval plus one request. A failed
-  refresh keeps the last document and is retried at the next interval.
+  `refreshIntervalMs` the next lookup re-fetches in the background with the ETag, so an
+  unchanged document costs a 304 and a change reaches a running relay within roughly one
+  interval. A failed refresh — or a 404 once a document is held — keeps the last document
+  and is logged, and polling continues at the same cadence (a 404 is a state; polling is
+  how the engine learns management was switched back on). An engine that gets a 404
+  before it has ever held a document answers 503 to every webhook and logs why: nothing
+  is dropped silently. To fail at startup instead, load explicitly (below).
 - The document is validated exactly like a local one (`parseRoutes`, including the hard
   denylist and your registered `adapters` and `enrichments` — an `enrich:` naming a
   function you have not registered is rejected). Secrets are still references to names
   your `SecretResolver` resolves; no secret travels from End Close.
 - `RemoteConfigError.kind` tells `unavailable` (retryable) from `unauthorized`,
-  `not_found` (nothing provisioned for this key) and `invalid`.
+  `not_found` (not managed) and `invalid`.
+
+**Instance manifest.** With `announce` on (the default when routes come from End Close),
+the engine PUTs `/relays/instances/{instanceId}` before the first fetch, on every refresh
+and on `stop()`: `{ schema: 1, reason, host: 'embedded', engine_version, config_schema,
+config_source: 'remote', capabilities: { adapters, enrichments } }`. That is how End
+Close knows which adapters and enrichment names it may reference when authoring this
+environment's configuration — register first, author second. It carries nothing
+operational. Give each replica a stable `instanceId`. An engine given local routes sends
+nothing.
 
 For fail-fast boots, load explicitly — same options as `endclose:` — and pass the provider in:
 
 ```ts
 import { remoteRoutes } from '@end-close/relay'
-const routes = remoteRoutes({ apiKey }, { logger })
+const routes = remoteRoutes({ apiKey }, { logger, manifest: { instanceId: 'api-1', host: 'embedded', configSource: 'remote' } })
 await routes.load()                              // throws RemoteConfigError
 const relay = createRelay({ routes, ... })
 routes.current()?.environment                    // e.g. 'sandbox', when End Close names it
 ```
 
 `fetchRemoteConfig({ apiKey })` returns one validated document (`routes`, the raw
-`document`, `environment?`, `fetchedAt`) without a provider, for hosts that store
-configuration themselves.
+`document`, `environment?`, `etag?`, `fetchedAt`) without a provider; pass
+`{ ifNoneMatch: etag }` to get `null` back when it is unchanged.
 
 ## Knowing what happened to an event
 
@@ -225,8 +246,8 @@ let expire. A random id works too; a crashed replica's batch then waits out `lea
 `relay.on(event, handler)` delivers metadata-only events: `ingest`, `stored`, `settled`,
 `forward`, `delivered`, `enrich`, `batch.forwarded`, `batch.parked`, `prune`, `error`. Payloads
 and enriched values are never included.
-The application drives its Prometheus metrics and call-home from these; the engine itself
-never phones home.
+The application drives its Prometheus metrics from these. The engine contacts End Close
+on its own only to fetch configuration and, in that case, to announce its instance manifest.
 
 ## Operating
 

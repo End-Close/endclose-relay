@@ -21,6 +21,18 @@ export type {
   FetchRemoteConfigOptions,
   EndCloseSource,
 } from './engine/remote-config.js'
+export { buildManifest, splitEnrichments, CONFIG_SCHEMA_VERSION } from './engine/manifest.js'
+export type {
+  InstanceManifest,
+  ManifestReason,
+  ManifestHost,
+  ManifestSource,
+  ConfigSource,
+  EnrichmentDescriptor,
+  EnrichmentOutput,
+  EnrichmentRegistration,
+} from './engine/manifest.js'
+export { ENGINE_VERSION } from './version.js'
 
 export * from './engine/store.js'
 export { MemoryEventStore, memoryStore } from './engine/memory-store.js'

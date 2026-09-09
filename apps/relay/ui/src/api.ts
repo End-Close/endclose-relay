@@ -19,12 +19,21 @@ export interface Status {
   config_hash: string | null
   config_applied_at: string | null
   config_error: string | null
-  /** Bootstrap mode: why the configuration was not fetched from End Close. */
-  remote_config: { state: 'none' | 'disabled' | 'failed'; error?: string; retrying: boolean } | null
+  /** Who owns the configuration: End Close (editor locked) or this relay. */
+  remote_config: RemoteConfigStatus | null
   killswitch: { global: 'none' | 'pause' | 'panic'; routes_paused: string[] }
   queue: Partial<Record<string, number>>
   routes: RouteStatus[]
   storage: { db_path: string; db_bytes: number; persistent: boolean | null }
+}
+
+export interface RemoteConfigStatus {
+  state: 'managed' | 'unmanaged' | 'disabled' | 'failed' | 'unknown'
+  managed: boolean
+  environment: string | null
+  error: string | null
+  retrying: boolean
+  last_checked_at: string | null
 }
 
 export interface EventSummary {

@@ -326,18 +326,18 @@ export default function App() {
           <p className="env-warning">
             <strong>
               {status.remote_config.retrying
-                ? 'Fetching the configuration from End Close failed'
-                : 'The configuration fetched from End Close could not be applied'}
+                ? 'End Close could not be reached for the configuration'
+                : 'The configuration from End Close could not be used'}
             </strong>{' '}
             — {status.remote_config.error}.{' '}
             {status.remote_config.retrying
-              ? 'The relay keeps retrying every minute and restarts itself when it succeeds; or configure it manually below.'
+              ? 'The relay keeps asking every minute and restarts itself when End Close answers; or configure it manually below.'
               : 'Fix the cause (usually a secret env var named by the configuration) and recreate the container, or configure it manually below.'}
           </p>
         )}
-        {status.remote_config?.state === 'none' && (
+        {status.remote_config?.state === 'unmanaged' && (
           <p className="text-dim">
-            End Close holds no configuration for this API key yet; configure the relay below.
+            End Close is not managing this environment's configuration; configure the relay below.
           </p>
         )}
         {status.secret_envs.some((s) => !s.set) && (
@@ -393,7 +393,7 @@ export default function App() {
       </nav>
       {tab === 'status' && status && <RoutesTable status={status} refresh={refresh} />}
       {tab === 'events' && <EventsTab routes={status?.routes.map((r) => r.id) ?? []} />}
-      {tab === 'config' && <ConfigTab />}
+      {tab === 'config' && <ConfigTab managed={status?.remote_config?.managed ? status.remote_config : null} />}
       {tab === 'audit' && <AuditTab />}
     </>
   )

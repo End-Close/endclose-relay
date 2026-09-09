@@ -9,29 +9,45 @@ import {
   remoteRoutes,
   RemoteConfigError,
   StoreUnavailableError,
+  CONFIG_SCHEMA_VERSION,
+  ENGINE_VERSION,
 } from '../src/index.js'
 import { FIXTURES, TEST_CONFIG_YAML } from './helpers.js'
 
-// Routes fetched from End Close instead of supplied by the host: the API key selects the
-// environment, the engine fetches GET /relays/config, serves it, and re-fetches in the
-// background. Nothing here touches the network — fetch is faked.
+// Routes owned by End Close instead of supplied by the host: the API key selects the
+// environment, the engine fetches GET /relays/config, serves it, re-fetches with the
+// ETag in the background, and announces itself with PUT /relays/instances/{id}.
+// Nothing here touches the network — fetch is faked.
 
 const settlement = readFileSync(join(FIXTURES, 'payabli-settlement-funded.json'))
 const DOC = parse(TEST_CONFIG_YAML) as { routes: unknown[] }
 
-type Reply = { status: number; body?: unknown }
+type Reply = { status: number; body?: unknown; etag?: string }
 
-function fakeEndClose(initial: Reply = { status: 200, body: { environment: 'sandbox', ...DOC } }) {
+function fakeEndClose(initial: Reply = { status: 200, body: { environment: 'sandbox', ...DOC }, etag: '"v1"' }) {
   const configGets: Headers[] = []
+  const manifests: { id: string; body: any }[] = []
   const posts: any[] = []
   let reply = initial
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
+    const headers = new Headers(init?.headers)
     if (method === 'GET' && url.endsWith('/relays/config')) {
-      configGets.push(new Headers(init?.headers))
+      configGets.push(headers)
       if (reply.status === -1) throw new TypeError('fetch failed')
-      return new Response(reply.body === undefined ? '' : JSON.stringify(reply.body), { status: reply.status })
+      // Conditional GET: an unchanged document costs a 304.
+      if (reply.status === 200 && reply.etag && headers.get('if-none-match') === reply.etag) {
+        return new Response(null, { status: 304 })
+      }
+      return new Response(reply.body === undefined ? '' : JSON.stringify(reply.body), {
+        status: reply.status,
+        headers: reply.etag ? { etag: reply.etag } : {},
+      })
+    }
+    if (method === 'PUT' && url.includes('/relays/instances/')) {
+      manifests.push({ id: decodeURIComponent(url.split('/').pop()!), body: JSON.parse(String(init!.body)) })
+      return new Response(null, { status: 204 })
     }
     if (method === 'POST' && url.endsWith('/records/bulk')) {
       posts.push(JSON.parse(String(init!.body)))
@@ -42,7 +58,7 @@ function fakeEndClose(initial: Reply = { status: 200, body: { environment: 'sand
     }
     return new Response('{}', { status: 404 })
   }
-  return { configGets, posts, fetchImpl, set: (r: Reply) => (reply = r) }
+  return { configGets, manifests, posts, fetchImpl, set: (r: Reply) => (reply = r) }
 }
 
 const req = (body: Buffer) => ({
@@ -59,7 +75,9 @@ describe('fetchRemoteConfig', () => {
     const config = await fetchRemoteConfig({ apiKey: 'k', baseUrl: 'https://ec.test/v1', fetch: ec.fetchImpl })
     expect(ec.configGets).toHaveLength(1)
     expect(ec.configGets[0]!.get('x-api-key')).toBe('k')
+    expect(ec.configGets[0]!.get('if-none-match')).toBeNull()
     expect(config.environment).toBe('sandbox')
+    expect(config.etag).toBe('"v1"')
     expect(config.routes.map((r) => r.id)).toEqual(['payabli-settlements', 'payabli-batches'])
     // defaults applied on the validated routes, but the document is what End Close sent
     expect(config.routes[0]!.max_body_bytes).toBe(1024 * 1024)
@@ -67,10 +85,21 @@ describe('fetchRemoteConfig', () => {
     expect(typeof config.fetchedAt).toBe('string')
   })
 
+  it('sends If-None-Match and resolves to null on 304', async () => {
+    const ec = fakeEndClose()
+    const src = { apiKey: 'k', fetch: ec.fetchImpl }
+    const first = await fetchRemoteConfig(src)
+    expect(await fetchRemoteConfig(src, { ifNoneMatch: first.etag! })).toBeNull()
+    expect(ec.configGets[1]!.get('if-none-match')).toBe('"v1"')
+    ec.set({ status: 200, body: DOC, etag: '"v2"' })
+    const next = await fetchRemoteConfig(src, { ifNoneMatch: first.etag! })
+    expect(next?.etag).toBe('"v2"')
+  })
+
   it.each([
-    [{ status: 404, body: { error: 'no config' } }, 'not_found', false],
+    [{ status: 404, body: { error: 'not managed' } }, 'not_found', false],
     [{ status: 401, body: { error: 'bad key' } }, 'unauthorized', false],
-    [{ status: 403, body: { error: 'forbidden' } }, 'unauthorized', false],
+    [{ status: 403, body: { error: 'not a relay key' } }, 'unauthorized', false],
     [{ status: 503, body: { error: 'down' } }, 'unavailable', true],
     [{ status: -1 }, 'unavailable', true],
     [{ status: 200, body: { routes: [] } }, 'invalid', false],
@@ -106,8 +135,8 @@ describe('fetchRemoteConfig', () => {
   })
 })
 
-describe('createRelay without routes (fetched from End Close)', () => {
-  function makeRelay(ec: ReturnType<typeof fakeEndClose>, refreshIntervalMs?: number) {
+describe('createRelay without routes (owned by End Close)', () => {
+  function makeRelay(ec: ReturnType<typeof fakeEndClose>, remoteConfig?: { refreshIntervalMs?: number; announce?: boolean }) {
     return createRelay({
       store: memoryStore(),
       secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
@@ -115,7 +144,12 @@ describe('createRelay without routes (fetched from End Close)', () => {
       encryption: 'none',
       maskingKey: 'test-masking-key-0123456789',
       dispatch: { backoffBaseMs: 1, backoffCapMs: 1 },
-      ...(refreshIntervalMs !== undefined ? { remoteConfig: { refreshIntervalMs } } : {}),
+      instanceId: 'api-1',
+      enrichments: {
+        resident_name: { fn: () => 'Pat', description: 'Resident full name', output: 'string' },
+        resident_unit: () => '12B',
+      },
+      ...(remoteConfig ? { remoteConfig } : {}),
     })
   }
 
@@ -129,6 +163,41 @@ describe('createRelay without routes (fetched from End Close)', () => {
     expect(ec.posts[0].records[0]).toMatchObject({ data_stream_key: 'payabli_settlements_funded', external_id: 'trf_9f8e7d6c' })
     expect(ec.configGets).toHaveLength(1)
     expect((await relay.routes.all()).map((r) => r.id)).toEqual(['payabli-settlements', 'payabli-batches'])
+  })
+
+  it('announces the instance manifest on the first fetch and on stop', async () => {
+    const ec = fakeEndClose()
+    const relay = makeRelay(ec)
+    await relay.routes.all()
+    await sleep(5)
+    expect(ec.manifests).toHaveLength(1)
+    expect(ec.manifests[0]!.id).toBe('api-1')
+    expect(ec.manifests[0]!.body).toEqual({
+      schema: 1,
+      reason: 'boot',
+      host: 'embedded',
+      engine_version: ENGINE_VERSION,
+      config_schema: CONFIG_SCHEMA_VERSION,
+      config_source: 'remote',
+      capabilities: {
+        adapters: ['payabli', 'generic_hmac'],
+        enrichments: {
+          resident_name: { description: 'Resident full name', output: 'string' },
+          resident_unit: {},
+        },
+      },
+    })
+    expect(ENGINE_VERSION).toMatch(/^\d+\.\d+\.\d+/)
+    await relay.stop()
+    expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot', 'shutdown'])
+  })
+
+  it('sends no manifest when announce is off or routes are local', async () => {
+    const ec = fakeEndClose()
+    const relay = makeRelay(ec, { announce: false })
+    await relay.routes.all()
+    await relay.stop()
+    expect(ec.manifests).toHaveLength(0)
   })
 
   it('answers 503 until End Close is reachable, without fetching per webhook', async () => {
@@ -146,18 +215,26 @@ describe('createRelay without routes (fetched from End Close)', () => {
     expect(await relay.dispatchOnce()).toEqual({ delivered: 0, retried: 0, parked: 0 })
   })
 
-  it('picks up a changed document after the refresh interval and survives a failed refresh', async () => {
+  it('refreshes with the ETag: 304 keeps the document, 200 replaces it, errors and 404 keep the last one', async () => {
     const ec = fakeEndClose()
-    const relay = makeRelay(ec, 20)
+    const relay = makeRelay(ec, { refreshIntervalMs: 20 })
     expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 200 })
     expect(await relay.ingest('payabli-batches', req(settlement))).toMatchObject({ status: 200 })
 
-    // End Close drops the second route.
-    ec.set({ status: 200, body: { routes: [DOC.routes[0]] } })
+    // Unchanged: the refresh is a conditional GET answered 304.
     await sleep(30)
-    await relay.routes.get('payabli-settlements') // stale: serves the cache, refreshes in the background
+    await relay.routes.get('payabli-settlements')
     await sleep(10)
     expect(ec.configGets).toHaveLength(2)
+    expect(ec.configGets[1]!.get('if-none-match')).toBe('"v1"')
+    expect(await relay.ingest('payabli-batches', req(settlement))).toMatchObject({ status: 200 })
+
+    // End Close drops the second route: a new ETag, a new document.
+    ec.set({ status: 200, body: { routes: [DOC.routes[0]] }, etag: '"v2"' })
+    await sleep(30)
+    await relay.routes.get('payabli-settlements')
+    await sleep(10)
+    expect(ec.configGets).toHaveLength(3)
     expect(await relay.ingest('payabli-batches', req(settlement))).toMatchObject({ status: 404, outcome: 'unknown_route' })
 
     // A failed refresh keeps the last document.
@@ -165,8 +242,17 @@ describe('createRelay without routes (fetched from End Close)', () => {
     await sleep(30)
     await relay.routes.get('payabli-settlements')
     await sleep(10)
-    expect(ec.configGets).toHaveLength(3)
+    expect(ec.configGets).toHaveLength(4)
     expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 200 })
+
+    // Management switched off: nothing local to fall back to, so the last document stays.
+    ec.set({ status: 404, body: { error: 'not managed' } })
+    await sleep(30)
+    await relay.routes.get('payabli-settlements')
+    await sleep(10)
+    expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 200 })
+    // Every refresh re-announced the instance as a heartbeat.
+    expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot', 'heartbeat', 'heartbeat', 'heartbeat', 'heartbeat'])
   })
 })
 
@@ -184,6 +270,7 @@ describe('remoteRoutes (explicit provider)', () => {
     await expect(routes.refresh()).rejects.toMatchObject({ kind: 'unauthorized' })
     expect(routes.current()).toBe(first) // the cache survives a failed refresh
     expect(await routes.get('payabli-batches')).toBeDefined()
+    expect(ec.manifests).toHaveLength(0) // no manifest without one configured
   })
 
   it('load() rejects when nothing has ever been fetched', async () => {
