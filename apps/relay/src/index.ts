@@ -3,8 +3,9 @@ import { openDb, SqliteControlStore, SqliteEventStore, EventsRepo, KvRepo, type 
 import { createRelay, deriveKey, EndCloseClient, envSecrets, RelayHooks } from '@end-close/relay'
 import { migrate } from './db/migrate.js'
 import { DbRouteProvider } from './db/route-provider.js'
-import { resolveActiveConfig, readActiveConfigRaw } from './config/store.js'
-import { loadRuntimeSettings, isTelemetryEnabled } from './config/runtime.js'
+import { resolveActiveConfig, type ActiveConfigState } from './config/store.js'
+import { RemoteConfigManager, type RemoteCheck } from './config/remote.js'
+import { loadRuntimeSettings } from './config/runtime.js'
 import { loadSecretsFile } from './config/secrets.js'
 import { buildIngestServer } from './ingest/server.js'
 import { buildAdminServer } from './admin/server.js'
@@ -12,7 +13,7 @@ import { buildSetupServer, checkRequiredEnv } from './admin/setup-server.js'
 import { isDbPathPersistent } from './db/persistence.js'
 import { buildMetricsServer } from './metrics/server.js'
 import { Metrics } from './metrics/metrics.js'
-import { createTelemetry, snapshotFromDb, type Telemetry } from './forward/telemetry.js'
+import { createInstanceReporter } from './forward/manifest.js'
 import { VERSION } from './version.js'
 import { log } from './log.js'
 
@@ -60,7 +61,6 @@ async function main(): Promise<void> {
     log.error('setup required: missing/invalid environment', {
       missing: missingEnv.map((m) => `${m.name} (${m.problem})`).join(', '),
     })
-    await emitSetupTelemetry(missingEnv)
     const setupDbPath = process.env.RELAY_DB_PATH ?? DEFAULT_DB_PATH
     const setup = buildSetupServer(missingEnv, {
       dbPath: setupDbPath,
@@ -81,22 +81,52 @@ async function main(): Promise<void> {
   const db = openDb(dbPath)
   migrate(db)
 
-  // DB is authoritative; RELAY_CONFIG only seeds an empty database on first boot.
-  const state = resolveActiveConfig(
-    db,
-    process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml',
-    secretResolver,
-  )
-
   const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
   const client = new EndCloseClient(settings.endcloseBaseUrl, apiKey)
   const startedAt = Date.now()
-  const telemetry = createTelemetry({
+
+  // Who owns the configuration. End Close is asked first (the API key is
+  // environment-scoped, so it alone selects the environment): a 200 means End Close
+  // owns it — the document is stored as a version attributed to "endclose", applied
+  // live, kept current by polling, and the local editor is locked. A 404 means the relay
+  // is configured locally: the stored config, else the seed file, else bootstrap mode.
+  const remote = new RemoteConfigManager(
+    db,
+    {
+      client,
+      apiKey,
+      baseUrl: settings.endcloseBaseUrl,
+      enabled: settings.remoteConfig.enabled,
+      secrets: secretResolver,
+    },
+    log,
+  )
+  const stored = resolveActiveConfig(db, undefined, secretResolver)
+  const check = await remote.check()
+  let state: ActiveConfigState
+  if (check.kind === 'managed') {
+    state = { kind: 'ok', loaded: check.loaded }
+    log.info('configuration managed by End Close', {
+      base_url: settings.endcloseBaseUrl,
+      environment: check.environment ?? null,
+      config_hash: check.loaded.hash,
+      updated: check.changed,
+    })
+  } else {
+    logRemoteCheck(check)
+    state =
+      stored.kind === 'empty'
+        ? resolveActiveConfig(db, process.env.RELAY_CONFIG ?? '/etc/endclose-relay/relay.yaml', secretResolver)
+        : stored
+  }
+
+  // Instance manifest call-home: boot, heartbeats, shutdown. Metadata only.
+  const reporter = createInstanceReporter({
     enabled: settings.telemetry.enabled,
     apiKey,
     client,
-    version: VERSION,
-    startedAt,
+    instanceId: settings.instanceId,
+    configSource: () => (remote.managed ? 'remote' : 'local'),
   })
 
   if (state.kind !== 'ok') {
@@ -110,15 +140,29 @@ async function main(): Promise<void> {
       log.error('stored configuration fails validation — recovery via the admin UI', {
         error: state.error,
       })
-      const raw = readActiveConfigRaw(db)
-      telemetry.captureError('config_invalid', new Error(state.error), {
-        ...(raw?.yamlText ? { config: raw.yamlText } : {}),
-      })
     } else {
       log.warn('no configuration — bootstrap mode: admin UI on :8081, webhooks NOT accepted')
     }
     const metrics = buildMetrics(db, dbPath)
     let restarting = false
+    const restart = (why: string) => {
+      if (restarting) return
+      restarting = true
+      log.info(why)
+      remote.stop()
+      void reporter.stop().finally(() => setTimeout(() => process.exit(0), 500)) // let the HTTP response flush
+    }
+    // Keep asking: a relay that came up before its egress was ready, or before End Close
+    // started managing it, configures itself without a manual restart. An operator apply
+    // in the meantime restarts the process first; End Close's answer then wins at next boot.
+    remote.start(settings.remoteConfig.pollIntervalMs, (again) => {
+      if (restarting) return
+      if (again.kind === 'managed') {
+        restart('configuration received from End Close — restarting into running mode')
+      } else {
+        logRemoteCheck(again)
+      }
+    })
     const admin = await buildAdminServer({
       db,
       dbPath,
@@ -127,15 +171,11 @@ async function main(): Promise<void> {
       maskingKey,
       dataKey,
       mode: 'bootstrap',
-      telemetry,
       secrets: secretResolver,
       ...(state.kind === 'invalid' ? { configError: state.error } : {}),
-      onBootstrapApplied: () => {
-        if (restarting) return
-        restarting = true
-        log.info('initial config applied — restarting into running mode')
-        setTimeout(() => process.exit(0), 500) // let the HTTP response flush
-      },
+      remoteConfig: () => remote.snapshot(),
+      onConfigApplied: () => reporter.configApplied(),
+      onBootstrapApplied: () => restart('initial config applied — restarting into running mode'),
     })
     const metricsServer = buildMetricsServer({
       metrics,
@@ -145,13 +185,7 @@ async function main(): Promise<void> {
     await admin.listen({ port: settings.admin.port, host: settings.admin.host })
     await metricsServer.listen({ port: settings.metrics.port, host: settings.metrics.host })
     log.info('bootstrap mode ready', { version: VERSION, admin_port: settings.admin.port })
-    telemetry.start(() => snapshotFromDb(db, dbPath, startedAt, VERSION))
-    telemetry.capture('relay_boot', {
-      mode: 'bootstrap',
-      persistent: isDbPathPersistent(dbPath),
-      route_count: 0,
-      has_api_key: Boolean(apiKey),
-    })
+    reporter.start()
     return
   }
 
@@ -163,7 +197,7 @@ async function main(): Promise<void> {
   const metrics = buildMetrics(db, dbPath)
   const hooks = new RelayHooks()
   metrics.subscribe(hooks)
-  telemetry.subscribe(hooks)
+  hooks.on('error', () => reporter.reportError())
   // A missing API key must not crash the relay: webhooks keep buffering (the point of
   // store-and-forward) and the admin UI banners the missing secret. Forwarding retries
   // until the key is provided and the container restarted.
@@ -187,6 +221,11 @@ async function main(): Promise<void> {
     hooks,
   })
   relay.start()
+  // While End Close owns the configuration, keep it current: a changed document becomes
+  // a new version and applies live (routes are read from the database per request).
+  remote.start(settings.remoteConfig.pollIntervalMs, (again) => {
+    if (again.kind === 'failed') log.warn('End Close configuration check failed', { error: again.error })
+  })
 
   const ingest = buildIngestServer({ ingest: relay.ingest, logger: log })
   const admin = await buildAdminServer({
@@ -196,8 +235,9 @@ async function main(): Promise<void> {
     basicAuth: adminAuth,
     maskingKey,
     dataKey,
-    telemetry,
     secrets: secretResolver,
+    remoteConfig: () => remote.snapshot(),
+    onConfigApplied: () => reporter.configApplied(),
   })
   const metricsServer = buildMetricsServer({
     metrics,
@@ -214,27 +254,17 @@ async function main(): Promise<void> {
     admin_port: settings.admin.port,
     metrics_port: settings.metrics.port,
   })
-  telemetry.start(() => snapshotFromDb(db, dbPath, startedAt, VERSION))
-  telemetry.capture('relay_boot', {
-    mode: 'running',
-    persistent: isDbPathPersistent(dbPath),
-    route_count: config.routes.length,
-    has_api_key: Boolean(apiKey),
-    config: loaded.yamlText,
-  })
+  reporter.start()
 
   let shuttingDown = false
   const shutdown = async (sig: string) => {
     if (shuttingDown) return
     shuttingDown = true
     log.info('shutting down', { signal: sig })
-    telemetry.capture('relay_shutdown', {
-      signal: sig,
-      uptime_s: Math.round((Date.now() - startedAt) / 1000),
-    })
+    remote.stop()
     await ingest.close() // stop accepting webhooks first
     await relay.stop() // drain the in-flight dispatch cycle
-    await telemetry.stop()
+    await reporter.stop()
     await Promise.all([admin.close(), metricsServer.close()])
     db.close()
     process.exit(0)
@@ -243,40 +273,32 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'))
 }
 
-main().catch((err) => {
-  log.error('fatal boot error', { error: (err as Error).message })
-  void emitFatalTelemetry(err).finally(() => process.exit(1))
-})
-
-async function emitSetupTelemetry(missing: { name: string }[]): Promise<void> {
-  const t = telemetryFromEnv()
-  if (!t) return
-  t.captureError('setup_missing_env', new Error('setup required'), {
-    missing: missing.map((m) => m.name).join(','),
-  })
-  await t.stop()
-}
-
-async function emitFatalTelemetry(err: unknown): Promise<void> {
-  try {
-    const t = telemetryFromEnv()
-    if (!t) return
-    t.captureError('fatal_boot', err)
-    await t.stop()
-  } catch {
-    // never block process exit
+function logRemoteCheck(result: RemoteCheck): void {
+  switch (result.kind) {
+    case 'unmanaged':
+      log.info('End Close is not managing this configuration — configured locally')
+      break
+    case 'disabled':
+      log.info(
+        result.reason === 'env'
+          ? 'remote configuration disabled (RELAY_REMOTE_CONFIG) — configured locally'
+          : 'no ENDCLOSE_API_KEY to ask End Close for a configuration — configured locally',
+      )
+      break
+    case 'failed':
+      log.error(
+        result.retryable
+          ? 'End Close could not be reached for the configuration — retrying in the background'
+          : 'the configuration from End Close could not be used',
+        { error: result.error },
+      )
+      break
+    case 'managed':
+      break
   }
 }
 
-function telemetryFromEnv(): Telemetry | undefined {
-  const apiKey = process.env.ENDCLOSE_API_KEY ?? ''
-  if (!apiKey || !isTelemetryEnabled()) return undefined
-  const settings = loadRuntimeSettings()
-  return createTelemetry({
-    enabled: true,
-    apiKey,
-    client: new EndCloseClient(settings.endcloseBaseUrl, apiKey),
-    version: VERSION,
-    startedAt: Date.now(),
-  })
-}
+main().catch((err) => {
+  log.error('fatal boot error', { error: (err as Error).message })
+  process.exit(1)
+})

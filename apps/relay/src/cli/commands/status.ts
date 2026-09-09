@@ -15,6 +15,14 @@ export async function statusCommand(client: AdminClient): Promise<void> {
   console.log(`killswitch:  ${kill?.global ?? '?'}`)
   console.log(`config:      ${hash ?? '(none)'}`)
   if (data.config_error) console.log(`config_err:  ${data.config_error}`)
+  const remote = data.remote_config as
+    | { state: string; managed: boolean; environment: string | null; error: string | null }
+    | null
+    | undefined
+  if (remote) {
+    const where = remote.managed ? `managed by End Close${remote.environment ? ` (${remote.environment})` : ''}` : remote.state
+    console.log(`remote:      ${where}${remote.error ? ` — ${remote.error}` : ''}`)
+  }
   console.log(`db:          ${storage?.db_path ?? '?'}`)
   console.log(
     `persistent:  ${storage?.persistent === true ? 'yes' : storage?.persistent === false ? 'NO — ephemeral' : 'unknown'}`,

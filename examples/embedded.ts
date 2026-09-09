@@ -4,6 +4,9 @@
 //   pnpm build:packages
 //   ENDCLOSE_API_KEY=... PAYABLI_WEBHOOK_SECRET='Bearer x' pnpm --filter @end-close/relay-examples embedded
 //
+// Set REMOTE_CONFIG=1 to leave `routes` out: the engine then fetches them from End Close
+// with the API key (which is environment-scoped, so it alone picks the environment).
+//
 // Then POST a Payabli fixture:
 //   curl -X POST localhost:9000/webhooks/payabli-settlements -H 'authorization: Bearer x' \
 //        --data-binary @apps/relay/test/fixtures/payabli-settlement-funded.json
@@ -43,14 +46,18 @@ routes:
         resident_name: { source: PayorId, enrich: resident_name }
 `
 
+// Both documents the local host runs: the shipped example routes plus the transaction
+// route above. With REMOTE_CONFIG set, End Close supplies the routes instead.
+const localRoutes = () => [
+  ...parseRoutes(parse(readFileSync(new URL('../relay.example.yaml', import.meta.url), 'utf8'))).map((r) => ({
+    ...r,
+    auth: { ...r.auth, allowed_ips: [] }, // the example config pins Payabli's egress IP
+  })),
+  ...parseRoutes(parse(transactionRoutes), { enrichments }),
+]
+
 const relay = createRelay({
-  routes: [
-    ...parseRoutes(parse(readFileSync(new URL('../relay.example.yaml', import.meta.url), 'utf8'))).map((r) => ({
-      ...r,
-      auth: { ...r.auth, allowed_ips: [] }, // the example config pins Payabli's egress IP
-    })),
-    ...parseRoutes(parse(transactionRoutes), { enrichments }),
-  ],
+  ...(process.env.REMOTE_CONFIG ? {} : { routes: localRoutes() }),
   store: memoryStore(),
   secrets: envSecrets(process.env),
   endclose: {

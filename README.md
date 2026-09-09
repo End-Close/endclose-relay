@@ -96,7 +96,8 @@ The root `docker-compose.yaml` below is the manual/dev application definition.
 
 ```sh
 mkdir -p /etc/endclose-relay
-cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed
+cp relay.example.yaml /etc/endclose-relay/relay.yaml   # the first-boot seed (skip it if End
+                                                       # Close manages your configuration)
 # Provide the required env vars however you manage secrets; the compose file also
 # reads an optional .env next to it if that's your preference:
 #   ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET (Bearer <token you also set in Payabli>),
@@ -119,6 +120,12 @@ the matching `Authorization` header via `webHeaderParameters`.
   application — redeploys, image updates, and host re-provisioning can never clobber
   UI-made changes, because the config travels with the `relay-data` volume, which
   updates don't touch.
+- **End Close can manage it for you.** At boot, and every minute after, the relay asks
+  End Close whether it manages this environment's configuration (the API key is
+  environment-scoped, so it alone selects the environment). If so, End Close's document
+  is applied live as a version attributed to `endclose`, kept current with an ETag, and
+  the UI's editor is read-only; edits happen in End Close. If not, the relay is
+  configured locally as described above. `RELAY_REMOTE_CONFIG=off` never asks.
 - **Updates are ours.** A new version is a new image tag; updating = pull + recreate
   against the same volume. End Close commits to config-schema compatibility within a
   major version (additive changes only) — enforced mechanically in CI, where the shipped
@@ -140,10 +147,13 @@ same code can run inside a customer's own backend (the application itself is not
 | `packages/core` — `@end-close/relay` | the engine: routes schema, verification adapters, allowlist map + hard denylist, host enrichments (map fields computed by the embedding backend's own code), End Close client, dispatcher, store interfaces, in-memory store. Depends only on `zod`. |
 | `packages/store-sqlite` — `@end-close/relay-sqlite` | the SQLite event/control store the application uses (safe on EFS/NFS). |
 | `packages/store-contract` — `@end-close/relay-store-contract` | the behavioural test suite every store implementation must pass. |
-| `apps/relay` — the application | boot, admin UI/API, `relayctl`, metrics, telemetry, config versioning. The repo root holds the product version, the Dockerfile, compose and deploy files. |
+| `apps/relay` — the application | boot, admin UI/API, `relayctl`, metrics, instance manifest call-home, config versioning. The repo root holds the product version, the Dockerfile, compose and deploy files. |
 
 See [`packages/core/README.md`](packages/core/README.md) for embedding the engine, and
 [`examples/embedded.ts`](examples/embedded.ts) for a dependency-free host on `node:http`.
+An embedded engine given no `routes` fetches them from End Close with its API key, keeps
+them current with an ETag, and announces its adapters and enrichments to End Close, so the
+configuration is managed in End Close rather than in the host.
 The three packages are published to npm in lockstep with the product version: the release PR
 stamps the version into each manifest, and the `v*` tag publishes them alongside the image (see
 `.github/workflows/release.yml`). CI packs and smoke-installs the tarballs on every PR.

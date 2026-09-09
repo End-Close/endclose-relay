@@ -1,12 +1,11 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { refEnrichment, relayConfigSchema, type RelayConfig, type RouteConfig } from '../config/schema.js'
+import type { RouteConfig } from '../config/schema.js'
 import { deriveKey } from '../crypto/keys.js'
-import { EndCloseClient } from '../forward/endclose-client.js'
+import type { EndCloseClient } from '../forward/endclose-client.js'
 import { Dispatcher, type DispatchCounts } from '../forward/dispatcher.js'
 import type { Enrichment } from '../forward/enrich.js'
 import { mapEvent, type MappedEvent } from '../forward/mapper.js'
-import { hasAdapter } from '../ingest/adapters/registry.js'
 import type { ProcessorAdapter, RawRequest } from '../ingest/adapters/types.js'
 import type { Json } from '../mask/paths.js'
 import { noopLogger, type Logger } from '../logger.js'
@@ -14,6 +13,9 @@ import { sleep } from '../util/strings.js'
 import { aesGcmCodec, plainCodec } from './codec.js'
 import { RelayHooks, type RelayEventName, type RelayHandler } from './hooks.js'
 import { ingestWebhook, type IngestResult } from './ingest.js'
+import { splitEnrichments, type EnrichmentRegistration } from './manifest.js'
+import { remoteRoutes, toEndCloseClient, type RemoteRouteProvider } from './remote-config.js'
+import { assertKnownEnrichments, assertKnownSources } from './routes.js'
 import { toSecretResolver, type SecretResolver } from './secrets.js'
 import {
   DEFAULT_DISPATCH,
@@ -35,8 +37,13 @@ import {
 // supplied by the host.
 
 export interface RelayOptions {
-  /** Route definitions: the same shape as the `routes` block of relay.yaml. */
-  routes: RouteConfig[] | RouteProvider
+  /**
+   * Route definitions: the same shape as the `routes` block of relay.yaml, or a live
+   * provider. Omit to fetch them from End Close with the API key — the key is
+   * environment-scoped, so it alone determines which environment's configuration the
+   * relay runs (see `remoteRoutes`).
+   */
+  routes?: RouteConfig[] | RouteProvider
   store: EventStore
   /** Killswitch and per-route pause state. Default: in-memory, nothing paused. */
   control?: ControlStore
@@ -61,12 +68,23 @@ export interface RelayOptions {
    * Throw to retry the event with backoff; throw `EnrichmentError` to park it; return
    * `undefined` to omit the field. Bounded by `dispatch.enrichTimeoutMs` per call.
    */
-  enrichments?: Record<string, Enrichment>
+  enrichments?: Record<string, EnrichmentRegistration>
   /** Lease owner for claimed batches. Give each long-lived replica a stable id. */
   instanceId?: string
   hooks?: RelayHooks
   /** Supply a pre-built client (the application shares one with telemetry). */
   client?: EndCloseClient
+  /** Tuning for routes fetched from End Close (only used when `routes` is omitted). */
+  remoteConfig?: {
+    refreshIntervalMs?: number
+    /**
+     * Announce this instance to End Close (`PUT /relays/instances/{instanceId}`: host
+     * kind, engine and schema versions, registered adapters and enrichments) on the
+     * first fetch, each refresh, and `stop()`. Default true when routes come from End
+     * Close; nothing is sent otherwise.
+     */
+    announce?: boolean
+  }
 }
 
 export type DispatchOnceResult = DispatchCounts
@@ -108,6 +126,8 @@ export interface Relay {
   on<E extends RelayEventName>(name: E, handler: RelayHandler<E>): () => void
   readonly store: EventStore
   readonly control: ControlStore
+  /** Where routes are read from: static, the host's provider, or End Close when `routes` was omitted. */
+  readonly routes: RouteProvider
 }
 
 function toKey(name: string, v: string | Buffer): Buffer {
@@ -116,90 +136,52 @@ function toKey(name: string, v: string | Buffer): Buffer {
   return v
 }
 
-/** Reject routes whose `source` has no adapter (built-in or host-registered). */
-export function assertKnownSources(
-  routes: RouteConfig[],
-  adapters?: Record<string, ProcessorAdapter>,
-): void {
-  for (const r of routes) {
-    if (!hasAdapter(r.source, adapters)) {
-      throw new Error(`route ${r.id}: no adapter for source "${r.source}"`)
-    }
-  }
-}
+export { assertKnownSources, assertKnownEnrichments, routeEnrichments, parseRoutes } from './routes.js'
 
-/** Every `enrich:` reference in a route's map, as [field, enrichment name]. */
-export function routeEnrichments(route: RouteConfig): [field: string, enrichment: string][] {
-  const out: [string, string][] = []
-  const desc = route.map.description === undefined ? undefined : refEnrichment(route.map.description)
-  if (desc !== undefined) out.push(['description', desc])
-  for (const [key, ref] of Object.entries(route.map.metadata)) {
-    const name = refEnrichment(ref)
-    if (name !== undefined) out.push([`metadata.${key}`, name])
-  }
-  return out
-}
-
-/** Reject routes whose map names an enrichment the host has not registered. */
-export function assertKnownEnrichments(
-  routes: RouteConfig[],
-  enrichments?: Record<string, unknown>,
-): void {
-  for (const r of routes) {
-    for (const [field, name] of routeEnrichments(r)) {
-      if (!enrichments || !Object.hasOwn(enrichments, name)) {
-        throw new Error(`route ${r.id}: ${field} references unknown enrichment "${name}"`)
-      }
-    }
-  }
-}
-
-/**
- * Validate a routes document (parsed YAML or a plain object) into RouteConfig[]. Applies
- * defaults, the hard-denylist check on metadata names, duplicate-id, unknown-source and
- * unknown-enrichment checks. Pass the host's extra adapters and enrichments so routes
- * that use them validate too; with none registered, any `enrich:` reference is rejected.
- */
-export function parseRoutes(
-  doc: unknown,
-  opts: { adapters?: Record<string, ProcessorAdapter>; enrichments?: Record<string, unknown> } = {},
-): RouteConfig[] {
-  const config: RelayConfig = relayConfigSchema.parse(doc)
-  const seen = new Set<string>()
-  for (const route of config.routes) {
-    if (seen.has(route.id)) throw new Error(`duplicate route id: ${route.id}`)
-    seen.add(route.id)
-  }
-  assertKnownSources(config.routes, opts.adapters)
-  assertKnownEnrichments(config.routes, opts.enrichments)
-  return config.routes
-}
-
+const SHUTDOWN_ANNOUNCE_MS = 1_000
 const FLUSH_POLL_MIN_MS = 50
 const FLUSH_POLL_MAX_MS = 1000
 // Asking for "due" events at this time returns every route holding pending/retry rows.
 const FAR_FUTURE = '9999-12-31T23:59:59.999Z'
 
 export function createRelay(opts: RelayOptions): Relay {
+  const logger = opts.logger ?? noopLogger
+  const client = toEndCloseClient(opts.client ?? opts.endclose)
+  const enrichments = splitEnrichments(opts.enrichments)
+  const instanceId = opts.instanceId ?? randomUUID()
   if (Array.isArray(opts.routes)) {
     assertKnownSources(opts.routes, opts.adapters)
-    assertKnownEnrichments(opts.routes, opts.enrichments)
+    assertKnownEnrichments(opts.routes, enrichments.functions)
   }
-  const routes = Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes
+  const remote: RemoteRouteProvider | undefined =
+    opts.routes === undefined
+      ? remoteRoutes(client, {
+          logger,
+          ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          enrichments: enrichments.functions,
+          ...(opts.remoteConfig?.refreshIntervalMs !== undefined
+            ? { refreshIntervalMs: opts.remoteConfig.refreshIntervalMs }
+            : {}),
+          ...(opts.remoteConfig?.announce === false
+            ? {}
+            : {
+                manifest: {
+                  instanceId,
+                  host: 'embedded',
+                  configSource: 'remote',
+                  adapters: opts.adapters,
+                  enrichments: enrichments.descriptors,
+                },
+              }),
+        })
+      : undefined
+  const routes: RouteProvider = remote ?? (Array.isArray(opts.routes) ? staticRoutes(opts.routes) : opts.routes!)
   const control = opts.control ?? new MemoryControlStore()
   const secrets = toSecretResolver(opts.secrets)
-  const logger = opts.logger ?? noopLogger
   const hooks = opts.hooks ?? new RelayHooks()
   const codec =
     opts.encryption === 'none' ? plainCodec : aesGcmCodec(toKey('dataKey', opts.encryption.dataKey))
   const maskingKey = toKey('maskingKey', opts.maskingKey)
-  const client =
-    opts.client ??
-    new EndCloseClient(
-      opts.endclose.baseUrl ?? 'https://api.endclose.com/v1',
-      opts.endclose.apiKey,
-      opts.endclose.fetch ?? fetch,
-    )
   const dispatch: DispatchSettings = { ...DEFAULT_DISPATCH, ...opts.dispatch }
   const retention = opts.retention === false ? null : { ...DEFAULT_RETENTION, ...opts.retention }
   const signal = new EventEmitter()
@@ -226,11 +208,11 @@ export function createRelay(opts: RelayOptions): Relay {
     client,
     codec,
     maskingKey,
-    instanceId: opts.instanceId ?? randomUUID(),
+    instanceId,
     signal,
     hooks,
     logger,
-    ...(opts.enrichments ? { enrichments: opts.enrichments } : {}),
+    enrichments: enrichments.functions,
   })
 
   const dispatchOnce = async (o: { prune?: boolean } = {}): Promise<DispatchOnceResult> => {
@@ -280,7 +262,12 @@ export function createRelay(opts: RelayOptions): Relay {
   return {
     ingest: (routeId, req) => ingestWebhook(ingestDeps, routeId, req),
     start: () => dispatcher.start(),
-    stop: () => dispatcher.stop(),
+    stop: async () => {
+      await dispatcher.stop()
+      // Informational, and End Close records it without refreshing liveness: never let
+      // it hold a host's shutdown for longer than a moment.
+      await remote?.announce('shutdown', { timeoutMs: SHUTDOWN_ANNOUNCE_MS })
+    },
     dispatchOnce,
     flush,
     prune: () => dispatcher.pruneNow(),
@@ -290,5 +277,6 @@ export function createRelay(opts: RelayOptions): Relay {
     on: (name, handler) => hooks.on(name, handler),
     store,
     control,
+    routes,
   }
 }

@@ -9,6 +9,7 @@ import {
   validateConfig,
   type ConfigVersion,
   type PreviewResult,
+  type RemoteConfigStatus,
   type ValidationResult,
 } from './api.js'
 import { fmtAgo } from './format.js'
@@ -41,7 +42,18 @@ routes:
 // schema, previews the exact outbound record for a sample payload, and saves a new
 // config version. Secrets never appear here — the YAML references env-var names only.
 
-export default function ConfigTab() {
+// `remote`: who owns the configuration. While End Close does, the document is shown,
+// validated and previewed as usual but not edited here — changes are made in End Close
+// and arrive within a minute as new versions. `configHash` is the active hash from the
+// status poll: when it changes underneath (a version applied from End Close), reload.
+export default function ConfigTab({
+  remote = null,
+  configHash = null,
+}: {
+  remote?: RemoteConfigStatus | null
+  configHash?: string | null
+}) {
+  const locked = remote?.managed === true
   const [yaml, setYaml] = useState('')
   const [activeHash, setActiveHash] = useState('')
   const [dirty, setDirty] = useState(false)
@@ -79,6 +91,12 @@ export default function ConfigTab() {
     fetchConfigVersions().then(setVersions, () => setVersions([]))
   }
   useEffect(reload, [])
+  useEffect(() => {
+    // A new version arrived from End Close (or another admin session): refresh unless
+    // the operator is mid-edit on an unlocked editor.
+    if (configHash && activeHash && configHash !== activeHash && (locked || !dirty)) reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configHash])
 
   const onValidate = async () => setValidation(await validateConfig(yaml))
 
@@ -170,17 +188,38 @@ export default function ConfigTab() {
 
   return (
     <div>
+      {locked && remote && (
+        <p className="env-warning">
+          <strong>Managed by End Close</strong>
+          {remote.environment ? ` (environment: ${remote.environment})` : ''} — this configuration is
+          edited in End Close and reaches the relay within a minute. The editor below is read-only;
+          validate, preview and download still work.
+          {remote.last_confirmed_at && (
+            <span className="text-dim"> Last confirmed {fmtAgo(remote.last_confirmed_at)}.</span>
+          )}
+        </p>
+      )}
+      {remote?.state === 'failed' && (
+        <p className="env-warning">
+          <strong>End Close could not be reached for the configuration</strong> — {remote.error}.{' '}
+          {remote.retrying
+            ? 'The relay keeps asking every minute and runs the configuration it has meanwhile.'
+            : 'Fix the cause (a secret env var named by the configuration, the API key, or the document in End Close); the relay keeps asking every minute.'}
+        </p>
+      )}
       <p className="text-dim">
         active config:{' '}
         <code className="text-xs">{activeHash ? `${activeHash.slice(0, 19)}…` : '(none yet)'}</code>
-        {dirty && <span className="text-warn"> (editor has unsaved changes)</span>}
+        {dirty && !locked && <span className="text-warn"> (editor has unsaved changes)</span>}
       </p>
 
       <textarea
         className="panel min-h-96 resize-y"
         spellCheck={false}
+        readOnly={locked}
         value={yaml}
         onChange={(e) => {
+          if (locked) return
           setYaml(e.target.value)
           setDirty(true)
           setValidation(null)
@@ -189,7 +228,7 @@ export default function ConfigTab() {
 
       <div className="my-4 flex items-center gap-3">
         <button onClick={onValidate}>validate</button>
-        <button onClick={onSave} disabled={!dirty}>apply</button>
+        {!locked && <button onClick={onSave} disabled={!dirty}>apply</button>}
         <button onClick={download}>download yaml</button>
         {saveMsg && (
           <span className={saveMsg.error ? 'font-bold text-bad' : 'text-dim'}>{saveMsg.text}</span>
@@ -261,7 +300,7 @@ export default function ConfigTab() {
               <td>
                 {v.config_hash === activeHash ? (
                   <span className="pill text-ok">active</span>
-                ) : (
+                ) : locked ? null : (
                   <button onClick={() => restoreVersion(v.id)}>load</button>
                 )}
               </td>

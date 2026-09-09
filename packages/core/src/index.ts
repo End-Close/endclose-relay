@@ -7,6 +7,33 @@ export { DEFAULT_DISPATCH, DEFAULT_RETENTION } from './engine/settings.js'
 export type { DispatchSettings, RetentionSettings } from './engine/settings.js'
 export type { IngestResult, IngestResultOutcome } from './engine/ingest.js'
 export { eventIdempotencyKey } from './engine/ingest.js'
+export {
+  fetchRemoteConfig,
+  remoteRoutes,
+  RemoteConfigError,
+  DEFAULT_REMOTE_REFRESH_MS,
+  DEFAULT_MANIFEST_HEARTBEAT_MS,
+} from './engine/remote-config.js'
+export type {
+  RemoteConfig,
+  RemoteConfigErrorKind,
+  RemoteRouteProvider,
+  RemoteRoutesOptions,
+  FetchRemoteConfigOptions,
+  EndCloseSource,
+} from './engine/remote-config.js'
+export { buildManifest, splitEnrichments, CONFIG_SCHEMA_VERSION } from './engine/manifest.js'
+export type {
+  InstanceManifest,
+  ManifestReason,
+  ManifestHost,
+  ManifestSource,
+  ConfigSource,
+  EnrichmentDescriptor,
+  EnrichmentOutput,
+  EnrichmentRegistration,
+} from './engine/manifest.js'
+export { ENGINE_VERSION } from './version.js'
 
 export * from './engine/store.js'
 export { MemoryEventStore, memoryStore } from './engine/memory-store.js'
@@ -32,7 +59,7 @@ export { mapEvent, toCents, parseDate, MappingError } from './forward/mapper.js'
 export type { EndCloseRecord, MapReport, MappedEvent, PendingEnrichment } from './forward/mapper.js'
 export { EnrichmentError, EnrichTimeoutError, validateEnrichedValue, withTimeout } from './forward/enrich.js'
 export type { Enrichment, EnrichContext } from './forward/enrich.js'
-export { EndCloseClient, TransientHttpError, PermanentHttpError } from './forward/endclose-client.js'
+export { EndCloseClient, TransientHttpError, PermanentHttpError, ENDCLOSE_API_URL } from './forward/endclose-client.js'
 export type { BulkRequestSummary, BulkResultItem } from './forward/endclose-client.js'
 export { adapterFor, hasAdapter } from './ingest/adapters/registry.js'
 export { payabliAdapter } from './ingest/adapters/payabli.js'

@@ -322,6 +322,24 @@ export default function App() {
             itself into running mode. <strong>No webhooks are accepted until then.</strong>
           </p>
         )}
+        {status.remote_config?.state === 'failed' && (
+          <p className="env-warning">
+            <strong>
+              {status.remote_config.retrying
+                ? 'End Close could not be reached for the configuration'
+                : 'The configuration from End Close could not be used'}
+            </strong>{' '}
+            — {status.remote_config.error}.{' '}
+            {status.remote_config.retrying
+              ? 'The relay keeps asking every minute and restarts itself when End Close answers; or configure it manually below.'
+              : 'Fix the cause (usually a secret env var named by the configuration) and recreate the container, or configure it manually below.'}
+          </p>
+        )}
+        {status.remote_config?.state === 'unmanaged' && (
+          <p className="text-dim">
+            End Close is not managing this environment's configuration; configure the relay below.
+          </p>
+        )}
         {status.secret_envs.some((s) => !s.set) && (
           <p className="text-dim">
             note: unset secrets ({status.secret_envs.filter((s) => !s.set).map((s) => s.name).join(', ')})
@@ -375,7 +393,7 @@ export default function App() {
       </nav>
       {tab === 'status' && status && <RoutesTable status={status} refresh={refresh} />}
       {tab === 'events' && <EventsTab routes={status?.routes.map((r) => r.id) ?? []} />}
-      {tab === 'config' && <ConfigTab />}
+      {tab === 'config' && <ConfigTab remote={status?.remote_config ?? null} configHash={status?.config_hash ?? null} />}
       {tab === 'audit' && <AuditTab />}
     </>
   )

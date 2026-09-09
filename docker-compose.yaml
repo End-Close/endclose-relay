@@ -1,8 +1,11 @@
 # endclose-relay — self-hosted webhook relay application.
 #
-# 1. Put a seed config at /etc/endclose-relay/relay.yaml (start from relay.example.yaml).
-#    It is read ONCE, on first boot, to seed the application; after that the config lives
-#    in the application database (on the relay-data volume) and is managed in the admin UI.
+# 1. Optionally put a seed config at /etc/endclose-relay/relay.yaml (start from
+#    relay.example.yaml). It is read ONCE, on first boot, to seed the application; after
+#    that the config lives in the application database (on the relay-data volume) and is
+#    managed in the admin UI — unless End Close manages your environment's configuration,
+#    in which case the relay follows End Close's document and the editor is read-only
+#    (RELAY_REMOTE_CONFIG=off keeps configuration local).
 # 2. Provide the required environment variables to the relay service however you
 #    manage secrets (secret-manager env injection, an optional .env next to this file,
 #    …): ENDCLOSE_API_KEY, PAYABLI_WEBHOOK_SECRET, RELAY_DATA_KEY, MASKING_HMAC_KEY,

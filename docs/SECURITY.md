@@ -67,7 +67,8 @@ log and the version history.
 | Receive the mapped records you configured                      | ✅                                         |
 | See raw webhook payloads, unmapped fields, or hashed originals | ❌ no: End Close never receives them. Operators can decrypt a buffered payload **on the application** (admin UI / `relayctl events payload`) — audited locally, never transmitted |
 | Reach into the application (any inbound connection)              | ❌ all connections are outbound            |
-| Flip killswitches, change config, or execute anything remotely | ❌ admin plane is host-local, credentialed by you |
+| Flip killswitches or execute anything remotely                 | ❌ admin plane is host-local, credentialed by you |
+| Own the **routes configuration**                                | ✅ when End Close manages your environment: `GET /relays/config` answers 200 with the document, the relay applies it live as an audited version by `endclose`, polls for changes with the ETag, and locks its local editor. Only route definitions travel — field maps and env-var *names*, never secrets — and the hard denylist still applies. Review it like any version: the config tab shows it, the map preview shows what leaves. Opt out with `RELAY_REMOTE_CONFIG=off`: the relay is then always configured locally and never asks |
 | See your processor credentials or the application's keys         | ❌ never transmitted or stored server-side |
 
 
@@ -97,9 +98,10 @@ else with 503. That page is intentionally unauthenticated: it exists precisely b
 the admin credential may be the thing that's missing, it appears only while the relay
 holds no data and accepts no webhooks, and it discloses nothing but env-var names.
 - **Bootstrap mode:** with env present but no configuration yet (fresh application, no
-seed file), the relay serves only the **authenticated** admin UI in a setup state where
-the initial configuration is entered; ingest is not listening and no webhooks are
-accepted, so there is still no data at risk. After the first apply the process restarts
+seed file, and End Close not managing the environment — or asking disabled with
+`RELAY_REMOTE_CONFIG=off`), the relay serves only the **authenticated**
+admin UI in a setup state where the initial configuration is entered; ingest is not
+listening and no webhooks are accepted, so there is still no data at risk. After the first apply the process restarts
 itself into normal operation. In both modes `GET /healthz` (unauthenticated liveness,
 disclosing only `{ ok, mode }`) reports healthy — deliberately, so an orchestrator's
 auto-restart never fights an operator mid-configuration.
@@ -107,17 +109,16 @@ auto-restart never fights an operator mid-configuration.
 counters only (no payload data), with optional basic auth (`METRICS_BASIC_AUTH`).
 - **Egress allowlist for your firewall:** `api.endclose.com:443`, plus your image
 registry for pulls (`ghcr.io`). Nothing else.
-- **Operational call-home:** when `ENDCLOSE_API_KEY` is set, the relay POSTs named
-events to `api.endclose.com/v1/relays/events` (same egress and key as record
-forwarding). End Close attributes them to your company. **Never sent:** webhook
-payloads, event IDs, `last_error` text, secret values, hostnames, or the database
-path. **Sent:** `relay_boot`, periodic `relay_heartbeat` (queue depths, killswitch,
-config YAML, per-route counts), `relay_error` (kind, truncated message,
-sanitized stack — Bearer/Basic/API-key substrings redacted), `relay_shutdown`,
-`relay_killswitch`, `relay_config_applied` (full routes YAML; it names env vars, not
-values), `relay_batch_parked` (route id, HTTP status, count). Errors are capped at 20
-per minute. Disable with `RELAY_TELEMETRY=off`. A 404 until the API endpoint exists
-does not affect ingest or dispatch.
+- **Instance manifest call-home:** when `ENDCLOSE_API_KEY` is set, the relay PUTs one
+manifest to `api.endclose.com/v1/relays/instances/<instance id>` at boot, every 15
+minutes, at shutdown, after a local config apply, and at most once a minute when the
+engine reports an error (same egress and key as record forwarding). It describes what
+the instance *is*, so End Close can validate the configuration it serves: host kind
+(`application`), engine and routes-schema version, whether the configuration comes from
+End Close or is local, the names of the built-in adapters, and a one-word `reason`.
+**Never sent:** webhook payloads, event IDs, queue depths, error messages or stacks,
+the configuration, secret values, hostnames, or the database path. Disable with
+`RELAY_TELEMETRY=off`. Failures never affect ingest or dispatch.
 
 
 
@@ -164,10 +165,23 @@ secrets can live only on the host if that is your policy.
 
 The application database is the configuration's source of truth. Every applied config is
 an **immutable version row** — full YAML, SHA-256 hash, timestamp — and the history is
-retained and browsable in the UI. A `relay.yaml` file is read exactly once, to seed an
-empty application; after that no file, image update, or redeploy can alter configuration —
-only an authenticated admin request can, and each one appends a version and an audit
-entry. The active config is exportable as YAML at any time (for sign-off records, your
+retained and browsable in the UI. Who writes those versions depends on one question the
+relay asks End Close at boot and then every minute (`GET /relays/config`, same egress
+and key): does End Close manage this environment's configuration?
+
+- **Yes (200):** End Close owns it. Each document End Close serves becomes a version
+  attributed to `endclose`, applied live, with an audit entry like any apply; the relay
+  keeps the ETag so unchanged polls cost a 304. The local editor is read-only (the API
+  answers 409); validate, preview, download and history still work. A document naming a
+  secret env var you have not set is *not* applied — the UI names the variable.
+- **No (404):** the relay is configured locally. A `relay.yaml` file seeds an empty
+  application once; after that only an authenticated admin request changes
+  configuration, and no file, image update or redeploy can. The relay keeps asking at
+  the same cadence, so management switched on later takes effect without a restart.
+- **Never:** `RELAY_REMOTE_CONFIG=off` skips the question entirely.
+
+Either way, no file, image update or redeploy alters configuration, every version is
+auditable, and secrets are never part of it. The active config is exportable as YAML at any time (for sign-off records, your
 git, or seeding a replacement application). Secrets are not part of configuration: the
 YAML references env-var names only, and the UI can neither display nor set secret
 values — rotating a credential means changing the container's environment through your
@@ -220,10 +234,14 @@ reviewed checkout.
 - *What data leaves our network?* Only explicitly mapped fields; preview any payload in
 the UI's config tab; hard denylist on top. Buffered raw webhooks can be decrypted for
 local inspection by authenticated operators — they never leave the application. The
-operational call-home (same `api.endclose.com` egress) sends queue gauges, the routes
-config, and sanitized error stacks — not payloads. Opt out: `RELAY_TELEMETRY=off`.
+instance manifest (same `api.endclose.com` egress) sends host kind, versions and
+adapter names — not payloads, queue gauges or errors. Opt out: `RELAY_TELEMETRY=off`.
 - *Can End Close access our systems?* No. No inbound connections, a host-local admin
-plane credentialed by you, read-only visibility limited to the records you send.
+plane credentialed by you, visibility limited to the records you send and the instance
+manifest. The one thing End Close can control is the routes configuration, and only when
+it manages your environment — every document it serves is stored, audited and reviewable
+like any version, secrets never travel, and `RELAY_REMOTE_CONFIG=off` keeps configuration
+local for good. Killswitches are never remote.
 - *Where does data live and for how long?* Encrypted SQLite on your volume; 7-day
 payload retention, 30-day ledger, parked events until you resolve them.
 - *How fast can we stop it?* One click in the admin UI (pause or panic); or revoke the

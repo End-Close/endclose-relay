@@ -4,7 +4,13 @@
 // DB-authoritative) config applies live and "restart pending" isn't a concept the
 // operator has to track. The config document contains routes only.
 
-import { DEFAULT_DISPATCH, DEFAULT_RETENTION, type DispatchSettings, type RetentionSettings } from '@end-close/relay'
+import {
+  DEFAULT_DISPATCH,
+  DEFAULT_RETENTION,
+  ENDCLOSE_API_URL,
+  type DispatchSettings,
+  type RetentionSettings,
+} from '@end-close/relay'
 
 export interface RuntimeSettings {
   endcloseBaseUrl: string
@@ -21,6 +27,11 @@ export interface RuntimeSettings {
   dispatch: DispatchSettings
   retention: RetentionSettings
   telemetry: { enabled: boolean }
+  /**
+   * Ask End Close whether it owns this environment's configuration, and how often to
+   * poll for changes while it does.
+   */
+  remoteConfig: { enabled: boolean; pollIntervalMs: number }
 }
 
 function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -36,7 +47,7 @@ function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): RuntimeSettings {
   return {
     // Override for staging/testing: ENDCLOSE_BASE_URL=https://api-staging.endclose.com/v1
-    endcloseBaseUrl: env.ENDCLOSE_BASE_URL || 'https://api.endclose.com/v1',
+    endcloseBaseUrl: env.ENDCLOSE_BASE_URL || ENDCLOSE_API_URL,
     instanceId: env.RELAY_INSTANCE_ID || 'relay',
     ingest: {
       port: int(env, 'RELAY_INGEST_PORT', 8443),
@@ -66,11 +77,27 @@ export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env): Runti
       ledgerDays: int(env, 'RELAY_RETENTION_LEDGER_DAYS', DEFAULT_RETENTION.ledgerDays),
     },
     telemetry: { enabled: isTelemetryEnabled(env) },
+    remoteConfig: {
+      enabled: isRemoteConfigEnabled(env),
+      pollIntervalMs: int(env, 'RELAY_REMOTE_POLL_MS', 60_000),
+    },
   }
 }
 
-/** Default on. RELAY_TELEMETRY=off (or 0 / false) disables the operational call-home. */
+/**
+ * Default on. RELAY_REMOTE_CONFIG=off (or 0 / false) stops the application asking End
+ * Close for its configuration at all: the relay is then always configured locally.
+ */
+export function isRemoteConfigEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isOff(env.RELAY_REMOTE_CONFIG)
+}
+
+/** Default on. RELAY_TELEMETRY=off (or 0 / false) disables the instance manifest call-home. */
 export function isTelemetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.RELAY_TELEMETRY ?? '').trim().toLowerCase()
-  return raw !== 'off' && raw !== '0' && raw !== 'false'
+  return !isOff(env.RELAY_TELEMETRY)
+}
+
+function isOff(raw: string | undefined): boolean {
+  const v = (raw ?? '').trim().toLowerCase()
+  return v === 'off' || v === '0' || v === 'false'
 }

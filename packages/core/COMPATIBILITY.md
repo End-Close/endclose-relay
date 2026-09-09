@@ -26,6 +26,14 @@ Within a major version the following are stable and change only additively:
   behavioural contract in `@end-close/relay-store-contract`. New optional methods may be added;
   required methods are not. A store signals lock contention or loss of connection by throwing
   `StoreUnavailableError` (ingest answers 503); any other `StoreError` answers 500.
+- **Configuration from End Close**: `routes` omitted from `createRelay()` means fetch from
+  `GET /relays/config` with the API key (200 = owned, 304 = unchanged for the ETag sent,
+  404 = not managed); `fetchRemoteConfig`, `remoteRoutes` and its
+  `load`/`refresh`/`current`/`announce`, `RemoteConfig` fields, and `RemoteConfigError.kind`
+  values. The response's `routes` is the same document as `routes:` in relay.yaml.
+- **Instance manifest**: the `InstanceManifest` shape sent to `PUT /relays/instances/{id}`
+  (`schema: 1`), `buildManifest`, `CONFIG_SCHEMA_VERSION`, and the `EnrichmentRegistration`
+  form `{ fn, description?, output? }` alongside a bare function.
 - **`IngestResult`** status codes and outcomes.
 - **Hook event names and payload fields** (fields may be added).
 - **Adapter interface** `ProcessorAdapter` (`verify`, `extractEventId`, `extractEventType`).
