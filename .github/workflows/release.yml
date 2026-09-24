@@ -7,6 +7,14 @@ on:
   push:
     tags: ['v*']
 
+# GitHub sometimes delivers one tag push twice. Two publish jobs then race, and the
+# second dies with "Cannot publish over previously staged version". Queue the duplicate
+# instead of cancelling the in-flight publish; publish-npm.sh skips versions already
+# in the registry, so the queued run finishes cleanly.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   gate:
     runs-on: ubuntu-latest
