@@ -1,0 +1,24 @@
+.github/workflows/release.yml
+  s_b79974a9505344::t_8838fb85f1f8db 10-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bf690a09f614cd2cab7e7ff2f2a2d465b5c7f418",
+  "prompts": {},
+  "humans": {
+    "h_dac726e37fe4d5": {
+      "author": "David Newell <d.newell1@outlook.com>"
+    }
+  },
+  "sessions": {
+    "s_b79974a9505344": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "071a8e1f-32af-43d8-a8ca-80663ca1ac91",
+        "model": "grok-4.7"
+      },
+      "human_author": "David Newell <d.newell1@outlook.com>"
+    }
+  }
+}
