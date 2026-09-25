@@ -1,0 +1,23 @@
+examples/embedded.ts
+  s_42201c9aafa33f::t_bd9f07828436af 7-8,16-18,22,27,37-54,56-61,63-80,82-83,90,97-98,100-101,104-106,109-110,114-119
+packages/core/test/remote-config.test.ts
+  s_42201c9aafa33f::t_e81939ea4678ac 201,209-224
+  s_42201c9aafa33f::t_da846315ea05d9 9
+  s_42201c9aafa33f::t_7dfba085d8819b 225-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fe2881432ae12910f7076068cef20f30bd8ab1b2",
+  "prompts": {},
+  "sessions": {
+    "s_42201c9aafa33f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ca209ffc-fde6-4163-9520-59b8eaa13ee1",
+        "model": "grok-4.7"
+      },
+      "human_author": "David Newell <d.newell1@outlook.com>"
+    }
+  }
+}
