@@ -6,6 +6,7 @@ import {
   createRelay,
   fetchRemoteConfig,
   memoryStore,
+  parseRoutes,
   remoteRoutes,
   RemoteConfigError,
   StoreUnavailableError,
@@ -197,11 +198,30 @@ describe('createRelay without routes (owned by End Close)', () => {
     expect(ec.manifests.map((m) => m.body.reason)).toEqual(['boot', 'shutdown'])
   })
 
-  it('sends no manifest when announce is off or routes are local', async () => {
+  it('sends no manifest when announce is off', async () => {
     const ec = fakeEndClose()
     const relay = makeRelay(ec, { announce: false })
     await relay.routes.all()
     await relay.stop()
+    expect(ec.manifests).toHaveLength(0)
+  })
+
+  it('does not fetch remote config when routes are supplied locally', async () => {
+    const ec = fakeEndClose()
+    const relay = createRelay({
+      routes: parseRoutes(DOC),
+      store: memoryStore(),
+      secrets: { PAYABLI_WEBHOOK_SECRET: 'Bearer test-webhook-secret' },
+      endclose: { apiKey: 'k', baseUrl: 'https://ec.test/v1', fetch: ec.fetchImpl },
+      encryption: 'none',
+      maskingKey: 'test-masking-key-0123456789',
+      dispatch: { backoffBaseMs: 1, backoffCapMs: 1 },
+      instanceId: 'api-1',
+    })
+    expect(await relay.ingest('payabli-settlements', req(settlement))).toMatchObject({ status: 200, outcome: 'accepted' })
+    expect(await relay.dispatchOnce()).toEqual({ delivered: 1, retried: 0, parked: 0 })
+    await relay.stop()
+    expect(ec.configGets).toHaveLength(0)
     expect(ec.manifests).toHaveLength(0)
   })
 
