@@ -10,8 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@end-close/relay": "workspace:*",
-    "yaml": "^2.7.0"
+    "@end-close/relay": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

@@ -1,9 +1,10 @@
+import type { IncomingHttpHeaders } from 'node:http'
 import type { RouteConfig } from '../../config/schema.js'
 import type { Json } from '../../mask/paths.js'
 
 export interface RawRequest {
   rawBody: Buffer
-  headers: Record<string, string | string[] | undefined>
+  headers: IncomingHttpHeaders
   remoteIp: string
 }
 
@@ -24,10 +25,7 @@ export interface ProcessorAdapter {
   extractEventType(body: Json, req: RawRequest, route: RouteConfig): string | null
 }
 
-export function headerValue(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
+export function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
   const v = headers[name.toLowerCase()]
   return Array.isArray(v) ? v[0] : v
 }

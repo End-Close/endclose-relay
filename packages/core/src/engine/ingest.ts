@@ -151,7 +151,7 @@ async function ingestInner(
     event_type: eventType,
     body_bytes: rawBody.length,
     remote_ip: raw.remoteIp,
-    header_names: requestHeaderNames(raw.headers as Record<string, unknown>),
+    header_names: requestHeaderNames(raw.headers),
     payload_keys: jsonTopLevelKeys(body),
   })
 
