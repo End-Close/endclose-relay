@@ -1,0 +1,56 @@
+packages/core/src/util/payload-shape.ts
+  s_4cce2bd4ae2320::t_ffa4f32b593cd0 11
+packages/core/src/ingest/adapters/types.ts
+  s_4cce2bd4ae2320::t_c75fefaf61170a 28
+  s_4cce2bd4ae2320::t_36d3c74df23dec 1,7
+packages/core/src/engine/ingest.ts
+  s_4cce2bd4ae2320::t_1f8e0a8ccda221 154
+examples/tsconfig.json
+  s_7563b64927271c::t_5900e83176394d 3-7
+examples/package.json
+  s_10ce7e80f4cb54::t_2308e9d1627caf 13
+examples/embedded.ts
+  s_4cce2bd4ae2320::t_9d1800d34a79e4 17,101
+  s_4cce2bd4ae2320::t_0ede975b6612d4 91-92
+  s_10ce7e80f4cb54::t_fb498781aa3996 39-70
+  s_4cce2bd4ae2320::t_664576e64cdff3 94
+  h_dac726e37fe4d5 16,24-25,30-32,37,77,82-83,86-88,96-97,99-100
+  h_dac726e37fe4d5 18-23,29,73,78-80,98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "68b8332dd2e101d7fd9a7cf483eb54edf7519369",
+  "prompts": {},
+  "humans": {
+    "h_dac726e37fe4d5": {
+      "author": "David Newell <d.newell1@outlook.com>"
+    }
+  },
+  "sessions": {
+    "s_10ce7e80f4cb54": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "81e6c32a-a6c4-47cb-992a-0b330155b5f0",
+        "model": "grok-4.6"
+      },
+      "human_author": "David Newell <d.newell1@outlook.com>"
+    },
+    "s_4cce2bd4ae2320": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "37867f4e-e7cc-4937-9b3d-de0d64c39a3f",
+        "model": "grok-4.6"
+      },
+      "human_author": "David Newell <d.newell1@outlook.com>"
+    },
+    "s_7563b64927271c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c404deab-5d51-4163-9083-c2f119cc50e0",
+        "model": "default"
+      },
+      "human_author": "David Newell <d.newell1@outlook.com>"
+    }
+  }
+}
