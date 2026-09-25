@@ -8,7 +8,7 @@ export function jsonTopLevelKeys(value: Json | unknown): string {
 }
 
 /** Comma-sorted request header names, excluding auth/secret headers. */
-export function requestHeaderNames(headers: Record<string, unknown>): string {
+export function requestHeaderNames(headers: object): string {
   return Object.keys(headers)
     .filter((h) => {
       const n = h.toLowerCase()
