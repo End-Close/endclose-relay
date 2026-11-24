@@ -51,6 +51,6 @@
   },
   "devDependencies": {
     "@end-close/relay": "workspace:*",
-    "vitest": "^3.0.9"
+    "vitest": "^4.1.12"
   }
 }
